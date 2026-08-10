@@ -1,0 +1,33 @@
+mode: paper  # paper | live (live ainda não implementado)
+
+exchange:
+  name: binance
+  # data-api.binance.vision: endpoint público de mercado (evita bloqueio 451 regional)
+  base_url: https://data-api.binance.vision
+  timeout_seconds: 15
+
+universe:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: 1h
+  lookback_candles: 120
+
+analysis:
+  fast_sma: 12
+  slow_sma: 26
+  min_signal_strength: 0.15
+  max_volatility: 0.08  # desvio-padrão relativo das retornos recentes
+
+capital:
+  starting_cash_usdt: 1000.0
+  risk_per_trade: 0.01      # 1% do equity por trade
+  max_position_pct: 0.20    # no máximo 20% do equity em um ativo
+  max_open_positions: 2
+  min_notional_usdt: 10.0
+
+memory:
+  db_path: data/memory/financeiros.db
+
+execution:
+  fee_bps: 10  # 0.10% por lado (simulação paper)
