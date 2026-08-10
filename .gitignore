@@ -19,8 +19,8 @@ env/
 .env
 data/memory/*.db
 data/memory/*.sqlite
-data/logs/
-data/logs/**
+data/logs/*
+!data/logs/.gitkeep
 *.log
 
 # IDE
