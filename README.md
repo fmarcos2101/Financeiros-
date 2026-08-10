@@ -15,6 +15,7 @@ Construir por partes:
 5. **Memória** — SQLite com decisões, fills, lições e ciclos
 6. **Execução** — paper broker (live fica para depois)
 7. **Runtime** — `run-once` ou `run-loop` com logs
+8. **Backtest** — replay offline no histórico com métricas
 
 ### Saídas automáticas
 
@@ -108,6 +109,18 @@ capital:
   reserve_skim_pct: 0.20
 ```
 
+## Backtest
+
+Replay da mesma lógica (sinal, risco, stop/TP, reserva) no histórico da Binance:
+
+```bash
+financeiros backtest --days 60
+financeiros backtest --days 90 --symbols BTCUSDT --trades
+financeiros backtest --days 30 --save data/logs/backtest-last.json
+```
+
+Métricas principais: retorno total, max drawdown, win rate, profit factor, stops/TPs, reserva acumulada.
+
 ## Testes
 
 ```bash
@@ -117,6 +130,5 @@ pytest -q
 ## Próximos passos sugeridos
 
 - Trailing stop
-- Backtest offline sobre histórico
 - Mais features de mercado (funding, open interest)
-- Live trading só depois de métricas estáveis em paper
+- Live trading só depois de métricas estáveis em paper + backtest

@@ -23,7 +23,7 @@ class UniverseConfig(BaseModel):
 class AnalysisConfig(BaseModel):
     fast_sma: int = 12
     slow_sma: int = 26
-    min_signal_strength: float = 0.15
+    min_signal_strength: float = 0.001  # spread mínimo |fast-slow|/preço (~0.1%)
     max_volatility: float = 0.08
 
 

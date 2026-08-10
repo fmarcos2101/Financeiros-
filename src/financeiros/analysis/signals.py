@@ -58,7 +58,9 @@ class SignalEngine:
         assert fast is not None and slow is not None and prev_fast is not None and prev_slow is not None
 
         spread = (fast - slow) / price if price else 0.0
-        strength = min(abs(spread) / max(self.config.min_signal_strength, 1e-9), 1.0)
+        # min_signal_strength = spread mínimo (|SMA_fast-SMA_slow|/preço) para agir
+        threshold = max(self.config.min_signal_strength, 1e-9)
+        strength = min(abs(spread) / threshold, 1.0)
 
         side = Side.HOLD
         rationale = "Sem cruzamento relevante; manter posição/caixa."
@@ -66,19 +68,19 @@ class SignalEngine:
         crossed_up = prev_fast <= prev_slow and fast > slow
         crossed_down = prev_fast >= prev_slow and fast < slow
 
-        if crossed_up and strength >= self.config.min_signal_strength:
+        if crossed_up and abs(spread) >= threshold:
             side = Side.BUY
             rationale = (
                 f"Cruzamento de alta: SMA{self.config.fast_sma} ({fast:.4f}) "
                 f"> SMA{self.config.slow_sma} ({slow:.4f})."
             )
-        elif crossed_down and strength >= self.config.min_signal_strength:
+        elif crossed_down and abs(spread) >= threshold:
             side = Side.SELL
             rationale = (
                 f"Cruzamento de baixa: SMA{self.config.fast_sma} ({fast:.4f}) "
                 f"< SMA{self.config.slow_sma} ({slow:.4f})."
             )
-        elif abs(spread) >= self.config.min_signal_strength:
+        elif abs(spread) >= threshold:
             # Tendência já estabelecida, mas sem cruzamento fresco → hold
             rationale = (
                 f"Tendência presente (spread={spread:.4f}), sem novo cruzamento. "

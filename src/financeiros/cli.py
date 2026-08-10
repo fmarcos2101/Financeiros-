@@ -5,8 +5,11 @@ import json
 import sys
 import time
 
+from pathlib import Path
+
 from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
+from financeiros.backtest import BacktestEngine
 from financeiros.config import load_config
 from financeiros.data.market import MarketDataService
 from financeiros.data.providers.binance import BinancePublicClient
@@ -214,6 +217,41 @@ def cmd_cycles(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backtest(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    logger = setup_logging(config.runtime.log_dir)
+    symbols = (
+        [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        if args.symbols
+        else list(config.universe.symbols)
+    )
+    interval = args.interval or config.universe.interval
+    engine = BacktestEngine(config)
+    logger.info(
+        "Backtest start symbols=%s interval=%s days=%s",
+        symbols,
+        interval,
+        args.days,
+    )
+    report = engine.run(days=args.days, symbols=symbols, interval=interval)
+    payload = report.to_dict(include_trades=args.trades, include_curve=args.curve)
+    logger.info(
+        "Backtest done return=%.2f%% max_dd=%.2f%% trades=%s wealth=%.2f",
+        report.total_return_pct,
+        report.max_drawdown_pct,
+        report.trades,
+        report.ending_wealth_usdt,
+    )
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+    if args.save:
+        out = Path(args.save)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("Relatório salvo em %s", out)
+    return 0
+
+
 def cmd_reset_portfolio(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if not args.yes:
@@ -300,6 +338,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mantém o fundo reserva ao resetar o capital de trading",
     )
     reset.set_defaults(func=cmd_reset_portfolio)
+
+    bt = sub.add_parser("backtest", help="Replay offline da estratégia no histórico")
+    bt.add_argument("--days", type=int, default=60, help="Janela histórica em dias")
+    bt.add_argument(
+        "--symbols",
+        default=None,
+        help="Lista separada por vírgula (default: config universe)",
+    )
+    bt.add_argument(
+        "--interval",
+        default=None,
+        help="Intervalo dos candles (default: config universe.interval)",
+    )
+    bt.add_argument("--trades", action="store_true", help="Inclui log de trades no JSON")
+    bt.add_argument("--curve", action="store_true", help="Inclui curva de equity no JSON")
+    bt.add_argument(
+        "--save",
+        default=None,
+        help="Salva o relatório JSON neste caminho",
+    )
+    bt.set_defaults(func=cmd_backtest)
 
     return parser
 
