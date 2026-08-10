@@ -66,6 +66,7 @@ class MemoryStore:
                 CREATE TABLE IF NOT EXISTS portfolio_cash (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     cash_usdt REAL NOT NULL,
+                    reserve_usdt REAL NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );
 
@@ -86,7 +87,25 @@ class MemoryStore:
                     approved_count INTEGER NOT NULL,
                     summary_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS reserve_transfers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    symbol TEXT,
+                    amount REAL NOT NULL,
+                    realized_pnl REAL NOT NULL,
+                    skim_pct REAL NOT NULL,
+                    note TEXT NOT NULL
+                );
                 """
+            )
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_cash)").fetchall()}
+        if cols and "reserve_usdt" not in cols:
+            conn.execute(
+                "ALTER TABLE portfolio_cash ADD COLUMN reserve_usdt REAL NOT NULL DEFAULT 0"
             )
 
     def record_decision(self, decision: Decision) -> int:
@@ -215,21 +234,28 @@ class MemoryStore:
                 seen.add(text)
                 lessons.append(text)
         return lessons
+
     def load_portfolio(self, starting_cash_usdt: float) -> Portfolio:
         """Carrega portfólio persistido ou inicializa com caixa inicial."""
         with self._connect() as conn:
             cash_row = conn.execute(
-                "SELECT cash_usdt FROM portfolio_cash WHERE id = 1"
+                "SELECT cash_usdt, reserve_usdt FROM portfolio_cash WHERE id = 1"
             ).fetchone()
             if cash_row is None:
                 now = utc_now().isoformat()
                 conn.execute(
-                    "INSERT INTO portfolio_cash (id, cash_usdt, updated_at) VALUES (1, ?, ?)",
+                    """
+                    INSERT INTO portfolio_cash (id, cash_usdt, reserve_usdt, updated_at)
+                    VALUES (1, ?, 0, ?)
+                    """,
                     (float(starting_cash_usdt), now),
                 )
                 return Portfolio(starting_cash_usdt)
 
-            portfolio = Portfolio(float(cash_row["cash_usdt"]))
+            portfolio = Portfolio(
+                float(cash_row["cash_usdt"]),
+                reserve_usdt=float(cash_row["reserve_usdt"] or 0.0),
+            )
             pos_rows = conn.execute(
                 "SELECT symbol, quantity, avg_price FROM positions WHERE quantity > 0"
             ).fetchall()
@@ -242,18 +268,19 @@ class MemoryStore:
             return portfolio
 
     def save_portfolio(self, portfolio: Portfolio) -> None:
-        """Persiste caixa e posições de forma atômica."""
+        """Persiste caixa, reserva e posições de forma atômica."""
         now = utc_now().isoformat()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO portfolio_cash (id, cash_usdt, updated_at)
-                VALUES (1, ?, ?)
+                INSERT INTO portfolio_cash (id, cash_usdt, reserve_usdt, updated_at)
+                VALUES (1, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     cash_usdt = excluded.cash_usdt,
+                    reserve_usdt = excluded.reserve_usdt,
                     updated_at = excluded.updated_at
                 """,
-                (float(portfolio.cash_usdt), now),
+                (float(portfolio.cash_usdt), float(portfolio.reserve_usdt), now),
             )
             conn.execute("DELETE FROM positions")
             for symbol, pos in portfolio.positions.items():
@@ -267,6 +294,45 @@ class MemoryStore:
                     (symbol, float(pos.quantity), float(pos.avg_price), now),
                 )
 
+    def record_reserve_transfer(
+        self,
+        *,
+        amount: float,
+        realized_pnl: float,
+        skim_pct: float,
+        symbol: str | None = None,
+        note: str = "",
+    ) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO reserve_transfers (
+                    created_at, symbol, amount, realized_pnl, skim_pct, note
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    utc_now().isoformat(),
+                    symbol,
+                    float(amount),
+                    float(realized_pnl),
+                    float(skim_pct),
+                    note,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def recent_reserve_transfers(self, limit: int = 20) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, symbol, amount, realized_pnl, skim_pct, note
+                FROM reserve_transfers
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def record_cycle(
         self,
         *,
@@ -275,12 +341,17 @@ class MemoryStore:
         cash_usdt: float,
         equity_usdt: float,
         decisions: list[Decision],
+        reserve_usdt: float = 0.0,
+        total_wealth_usdt: float | None = None,
     ) -> int:
         approved = sum(1 for d in decisions if d.approved)
+        wealth = total_wealth_usdt if total_wealth_usdt is not None else equity_usdt + reserve_usdt
         summary = {
             "symbols": [d.symbol for d in decisions],
             "sides": [d.side.value for d in decisions],
             "approved": [d.symbol for d in decisions if d.approved],
+            "reserve_usdt": reserve_usdt,
+            "total_wealth_usdt": wealth,
         }
         with self._connect() as conn:
             cur = conn.execute(
@@ -305,7 +376,7 @@ class MemoryStore:
     def get_status(self) -> dict:
         with self._connect() as conn:
             cash_row = conn.execute(
-                "SELECT cash_usdt, updated_at FROM portfolio_cash WHERE id = 1"
+                "SELECT cash_usdt, reserve_usdt, updated_at FROM portfolio_cash WHERE id = 1"
             ).fetchone()
             positions = [
                 dict(r)
@@ -322,14 +393,20 @@ class MemoryStore:
             ).fetchone()
             decision_count = conn.execute("SELECT COUNT(*) AS c FROM decisions").fetchone()["c"]
             fill_count = conn.execute("SELECT COUNT(*) AS c FROM fills").fetchone()["c"]
+            reserve_total = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) AS s FROM reserve_transfers"
+            ).fetchone()["s"]
 
         cash = float(cash_row["cash_usdt"]) if cash_row else None
+        reserve = float(cash_row["reserve_usdt"] or 0.0) if cash_row else 0.0
         return {
             "cash_usdt": cash,
+            "reserve_usdt": reserve,
             "portfolio_updated_at": cash_row["updated_at"] if cash_row else None,
             "positions": positions,
             "decision_count": decision_count,
             "fill_count": fill_count,
+            "reserve_skimmed_total": float(reserve_total),
             "last_cycle": dict(last_cycle) if last_cycle else None,
         }
 
@@ -345,18 +422,30 @@ class MemoryStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def reset_portfolio(self, starting_cash_usdt: float) -> None:
+    def reset_portfolio(
+        self,
+        starting_cash_usdt: float,
+        *,
+        keep_reserve: bool = False,
+    ) -> None:
         """Zera posições e redefine caixa. Mantém histórico de decisões/ciclos."""
         now = utc_now().isoformat()
         with self._connect() as conn:
+            reserve = 0.0
+            if keep_reserve:
+                row = conn.execute(
+                    "SELECT reserve_usdt FROM portfolio_cash WHERE id = 1"
+                ).fetchone()
+                reserve = float(row["reserve_usdt"] or 0.0) if row else 0.0
             conn.execute("DELETE FROM positions")
             conn.execute(
                 """
-                INSERT INTO portfolio_cash (id, cash_usdt, updated_at)
-                VALUES (1, ?, ?)
+                INSERT INTO portfolio_cash (id, cash_usdt, reserve_usdt, updated_at)
+                VALUES (1, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     cash_usdt = excluded.cash_usdt,
+                    reserve_usdt = excluded.reserve_usdt,
                     updated_at = excluded.updated_at
                 """,
-                (float(starting_cash_usdt), now),
+                (float(starting_cash_usdt), reserve, now),
             )

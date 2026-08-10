@@ -25,6 +25,10 @@ capital:
   max_position_pct: 0.20    # no máximo 20% do equity em um ativo
   max_open_positions: 2
   min_notional_usdt: 10.0
+  # Em cada venda com lucro, X% do PnL realizado vai para o fundo reserva
+  # (sai do caixa de trading e não é usado para novas compras)
+  reserve_enabled: true
+  reserve_skim_pct: 0.20
 
 memory:
   db_path: data/memory/financeiros.db

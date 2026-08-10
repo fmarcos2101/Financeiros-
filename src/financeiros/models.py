@@ -84,6 +84,8 @@ class Position(BaseModel):
 
 class PortfolioSnapshot(BaseModel):
     cash_usdt: float
+    reserve_usdt: float = 0.0
     positions: dict[str, Position] = Field(default_factory=dict)
-    equity_usdt: float = 0.0
+    equity_usdt: float = 0.0  # caixa de trading + posições (sem reserva)
+    total_wealth_usdt: float = 0.0  # equity + reserva
     updated_at: datetime = Field(default_factory=utc_now)

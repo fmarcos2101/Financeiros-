@@ -53,6 +53,7 @@ def test_paper_broker_and_portfolio_roundtrip():
     assert "ETHUSDT" in portfolio.positions
 
     sell = broker.execute("ETHUSDT", Side.SELL, quantity=1.0, price=110.0)
-    portfolio.apply_fill(sell)
+    outcome = portfolio.apply_fill(sell, reserve_skim_pct=0.0)
     assert "ETHUSDT" not in portfolio.positions
     assert portfolio.cash_usdt > 900
+    assert outcome.reserve_skim == 0.0

@@ -40,7 +40,10 @@ def _result_payload(result) -> dict:
     return {
         "cycle_id": result.cycle_id,
         "cash_usdt": result.cash_usdt,
+        "reserve_usdt": result.reserve_usdt,
         "equity_usdt": result.equity_usdt,
+        "total_wealth_usdt": result.total_wealth_usdt,
+        "reserve_skim_this_cycle": result.reserve_skim_this_cycle,
         "positions": result.positions,
         "decisions": [d.model_dump(mode="json") for d in result.decisions],
     }
@@ -53,10 +56,12 @@ def cmd_run_once(args: argparse.Namespace) -> int:
     result = pipeline.run_once()
     payload = _result_payload(result)
     logger.info(
-        "cycle=%s cash=%.4f equity=%.4f approved=%s",
+        "cycle=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f approved=%s",
         result.cycle_id,
         result.cash_usdt,
+        result.reserve_usdt,
         result.equity_usdt,
+        result.total_wealth_usdt,
         [d.symbol for d in result.decisions if d.approved],
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -84,11 +89,13 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
             try:
                 result = pipeline.run_once()
                 logger.info(
-                    "cycle_n=%s cycle_id=%s cash=%.4f equity=%.4f decisions=%s",
+                    "cycle_n=%s cycle_id=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f decisions=%s",
                     cycle_n,
                     result.cycle_id,
                     result.cash_usdt,
+                    result.reserve_usdt,
                     result.equity_usdt,
+                    result.total_wealth_usdt,
                     len(result.decisions),
                 )
                 print(json.dumps(_result_payload(result), indent=2, ensure_ascii=False))
@@ -128,6 +135,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     memory = MemoryStore(config.memory.db_path)
     status = memory.get_status()
+    reserve = status.get("reserve_usdt") or 0.0
     # Enriquece com mark-to-market se houver posições
     if status["positions"]:
         try:
@@ -144,12 +152,39 @@ def cmd_status(args: argparse.Namespace) -> int:
                 enriched.append({**pos, "mark_price": px, "market_value": round(mtm, 6)})
             status["positions"] = enriched
             status["equity_usdt"] = round(equity, 6)
+            status["total_wealth_usdt"] = round(equity + reserve, 6)
         except Exception as exc:
             status["equity_usdt"] = None
+            status["total_wealth_usdt"] = None
             status["mark_to_market_error"] = str(exc)
     else:
-        status["equity_usdt"] = status["cash_usdt"]
+        cash = status["cash_usdt"] or 0.0
+        status["equity_usdt"] = cash
+        status["total_wealth_usdt"] = round(cash + reserve, 6)
+    status["reserve_skim_pct"] = config.capital.reserve_skim_pct
+    status["reserve_enabled"] = config.capital.reserve_enabled
     print(json.dumps(status, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_reserve(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    memory = MemoryStore(config.memory.db_path)
+    status = memory.get_status()
+    transfers = memory.recent_reserve_transfers(limit=args.limit)
+    print(
+        json.dumps(
+            {
+                "reserve_usdt": status.get("reserve_usdt"),
+                "reserve_skimmed_total": status.get("reserve_skimmed_total"),
+                "reserve_enabled": config.capital.reserve_enabled,
+                "reserve_skim_pct": config.capital.reserve_skim_pct,
+                "transfers": transfers,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -172,8 +207,19 @@ def cmd_reset_portfolio(args: argparse.Namespace) -> int:
         return 2
     memory = MemoryStore(config.memory.db_path)
     cash = args.cash if args.cash is not None else config.capital.starting_cash_usdt
-    memory.reset_portfolio(cash)
-    print(json.dumps({"reset": True, "cash_usdt": cash}, indent=2))
+    memory.reset_portfolio(cash, keep_reserve=args.keep_reserve)
+    status = memory.get_status()
+    print(
+        json.dumps(
+            {
+                "reset": True,
+                "cash_usdt": cash,
+                "reserve_usdt": status.get("reserve_usdt"),
+                "keep_reserve": args.keep_reserve,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -203,8 +249,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     loop.set_defaults(func=cmd_run_loop)
 
-    status = sub.add_parser("status", help="Mostra caixa, posições e último ciclo")
+    status = sub.add_parser("status", help="Mostra caixa, reserva, posições e último ciclo")
     status.set_defaults(func=cmd_status)
+
+    reserve = sub.add_parser("reserve", help="Mostra fundo reserva e transferências")
+    reserve.add_argument("--limit", type=int, default=20)
+    reserve.set_defaults(func=cmd_reserve)
 
     cycles = sub.add_parser("cycles", help="Lista ciclos recentes")
     cycles.add_argument("--limit", type=int, default=10)
@@ -226,6 +276,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reset.add_argument("--yes", action="store_true", help="Confirma o reset")
     reset.add_argument("--cash", type=float, default=None, help="Caixa após reset")
+    reset.add_argument(
+        "--keep-reserve",
+        action="store_true",
+        help="Mantém o fundo reserva ao resetar o capital de trading",
+    )
     reset.set_defaults(func=cmd_reset_portfolio)
 
     return parser

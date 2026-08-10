@@ -33,6 +33,9 @@ class CapitalConfig(BaseModel):
     max_position_pct: float = 0.20
     max_open_positions: int = 2
     min_notional_usdt: float = 10.0
+    # Fundo reserva: fatia do lucro realizado (SELL com PnL > 0) sai do caixa de risco
+    reserve_enabled: bool = True
+    reserve_skim_pct: float = Field(default=0.20, ge=0.0, le=1.0)
 
 
 class MemoryConfig(BaseModel):

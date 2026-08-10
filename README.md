@@ -10,10 +10,15 @@ Construir por partes:
 
 1. **Dados** — candles/preço via API pública Binance (`data-api.binance.vision`)
 2. **Análise** — sinal (SMA cross) + filtros de risco
-3. **Capital** — position sizing e portfólio **persistido**
+3. **Capital** — position sizing, portfólio persistido e **fundo reserva**
 4. **Memória** — SQLite com decisões, fills, lições e ciclos
 5. **Execução** — paper broker (live fica para depois)
 6. **Runtime** — `run-once` ou `run-loop` com logs
+
+### Fundo reserva
+
+Em cada **venda com lucro**, uma fatia do PnL realizado (`reserve_skim_pct`, default 20%) sai do caixa de trading e vai para a reserva.  
+A reserva **não entra** no sizing/risco de novas compras — fica protegida.
 
 ## Estrutura
 
@@ -57,10 +62,11 @@ financeiros run-loop
 financeiros run-loop --interval 60 --max-cycles 3
 ```
 
-Ver portfólio / último ciclo:
+Ver portfólio / reserva / último ciclo:
 
 ```bash
 financeiros status
+financeiros reserve
 financeiros cycles --limit 10
 ```
 
@@ -75,6 +81,15 @@ Resetar caixa/posições (mantém histórico de decisões):
 
 ```bash
 financeiros reset-portfolio --yes
+financeiros reset-portfolio --yes --keep-reserve   # preserva o fundo reserva
+```
+
+Ajuste o percentual em `config/default.yaml`:
+
+```yaml
+capital:
+  reserve_enabled: true
+  reserve_skim_pct: 0.20
 ```
 
 ## Testes

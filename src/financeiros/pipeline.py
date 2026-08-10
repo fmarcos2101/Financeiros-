@@ -19,7 +19,10 @@ class CycleResult:
     decisions: list[Decision]
     equity_usdt: float
     cash_usdt: float
+    reserve_usdt: float
+    total_wealth_usdt: float
     positions: dict[str, dict]
+    reserve_skim_this_cycle: float
 
 
 class TradingPipeline:
@@ -43,6 +46,12 @@ class TradingPipeline:
         self.memory = memory
         self.broker = broker
 
+    def _skim_pct(self) -> float:
+        capital = self.config.capital
+        if not capital.reserve_enabled:
+            return 0.0
+        return float(capital.reserve_skim_pct)
+
     def run_once(self) -> CycleResult:
         if self.config.mode != "paper":
             raise RuntimeError(
@@ -52,6 +61,8 @@ class TradingPipeline:
         started_at = utc_now()
         prices: dict[str, float] = {}
         decisions: list[Decision] = []
+        skim_total = 0.0
+        skim_pct = self._skim_pct()
 
         for symbol in self.config.universe.symbols:
             candles = self.market.get_candles(
@@ -93,8 +104,6 @@ class TradingPipeline:
                 },
             )
 
-            # Reforço leve via memória: se rejeições recentes foram por volatilidade
-            # e o mercado ainda está perto do limite, não insiste na compra.
             if decision.approved and signal.side == Side.BUY:
                 vol_rejects = [h for h in memory_hints if "Volatilidade" in h]
                 near_limit = signal.volatility > self.config.analysis.max_volatility * 0.9
@@ -105,9 +114,6 @@ class TradingPipeline:
                     decision.rationale += " Bloqueado por memória: volatilidade ainda elevada."
                     decision.tags.append("memory_block")
 
-            decision_id = self.memory.record_decision(decision)
-            decision.metadata["decision_id"] = decision_id
-
             if decision.approved and decision.side in (Side.BUY, Side.SELL):
                 fill = self.broker.execute(
                     symbol=decision.symbol,
@@ -115,11 +121,28 @@ class TradingPipeline:
                     quantity=decision.quantity,
                     price=decision.price,
                 )
-                self.portfolio.apply_fill(fill)
+                outcome = self.portfolio.apply_fill(fill, reserve_skim_pct=skim_pct)
                 self.memory.record_fill(fill)
-                # Persiste logo após cada fill para não perder estado em falha
+                decision.metadata["realized_pnl"] = outcome.realized_pnl
+                decision.metadata["reserve_skim"] = outcome.reserve_skim
+                if outcome.reserve_skim > 0:
+                    skim_total += outcome.reserve_skim
+                    decision.tags.append("reserve_skim")
+                    decision.rationale += (
+                        f" Reserva: +{outcome.reserve_skim:.4f} USDT "
+                        f"({skim_pct:.0%} do lucro {outcome.realized_pnl:.4f})."
+                    )
+                    self.memory.record_reserve_transfer(
+                        amount=outcome.reserve_skim,
+                        realized_pnl=outcome.realized_pnl,
+                        skim_pct=skim_pct,
+                        symbol=decision.symbol,
+                        note="Skim automático sobre lucro realizado",
+                    )
                 self.memory.save_portfolio(self.portfolio)
 
+            decision_id = self.memory.record_decision(decision)
+            decision.metadata["decision_id"] = decision_id
             decisions.append(decision)
 
         for symbol in self.config.universe.symbols:
@@ -135,6 +158,8 @@ class TradingPipeline:
             cash_usdt=final.cash_usdt,
             equity_usdt=final.equity_usdt,
             decisions=decisions,
+            reserve_usdt=final.reserve_usdt,
+            total_wealth_usdt=final.total_wealth_usdt,
         )
 
         positions = {
@@ -150,5 +175,8 @@ class TradingPipeline:
             decisions=decisions,
             equity_usdt=final.equity_usdt,
             cash_usdt=final.cash_usdt,
+            reserve_usdt=final.reserve_usdt,
+            total_wealth_usdt=final.total_wealth_usdt,
             positions=positions,
+            reserve_skim_this_cycle=round(skim_total, 8),
         )
