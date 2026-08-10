@@ -43,6 +43,11 @@ class ExecutionConfig(BaseModel):
     fee_bps: float = 10.0
 
 
+class RuntimeConfig(BaseModel):
+    cycle_interval_seconds: int = 3600
+    log_dir: str = "data/logs"
+
+
 class AppConfig(BaseModel):
     mode: str = "paper"
     exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
@@ -51,6 +56,7 @@ class AppConfig(BaseModel):
     capital: CapitalConfig = Field(default_factory=CapitalConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
 
 class Settings(BaseSettings):

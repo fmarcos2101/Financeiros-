@@ -10,18 +10,20 @@ from financeiros.config import AppConfig
 from financeiros.data.market import MarketDataService
 from financeiros.execution.paper import PaperBroker
 from financeiros.memory.store import MemoryStore
-from financeiros.models import Decision, Side
+from financeiros.models import Decision, Side, utc_now
 
 
 @dataclass
 class CycleResult:
+    cycle_id: int
     decisions: list[Decision]
     equity_usdt: float
     cash_usdt: float
+    positions: dict[str, dict]
 
 
 class TradingPipeline:
-    """Orquestra: dados → sinal → risco → memória → (paper) execução."""
+    """Orquestra: dados → sinal → risco → memória → (paper) execução → persistência."""
 
     def __init__(
         self,
@@ -47,6 +49,7 @@ class TradingPipeline:
                 f"Modo '{self.config.mode}' ainda não suportado. Use paper."
             )
 
+        started_at = utc_now()
         prices: dict[str, float] = {}
         decisions: list[Decision] = []
 
@@ -114,16 +117,38 @@ class TradingPipeline:
                 )
                 self.portfolio.apply_fill(fill)
                 self.memory.record_fill(fill)
+                # Persiste logo após cada fill para não perder estado em falha
+                self.memory.save_portfolio(self.portfolio)
 
             decisions.append(decision)
 
-        # Atualiza preços faltantes para MTM
         for symbol in self.config.universe.symbols:
             if symbol not in prices:
                 prices[symbol] = self.market.get_price(symbol)
+
         final = self.portfolio.mark_to_market(prices)
+        self.memory.save_portfolio(self.portfolio)
+        finished_at = utc_now()
+        cycle_id = self.memory.record_cycle(
+            started_at=started_at.isoformat(),
+            finished_at=finished_at.isoformat(),
+            cash_usdt=final.cash_usdt,
+            equity_usdt=final.equity_usdt,
+            decisions=decisions,
+        )
+
+        positions = {
+            symbol: {
+                "quantity": pos.quantity,
+                "avg_price": pos.avg_price,
+                "mark_price": prices.get(symbol, pos.avg_price),
+            }
+            for symbol, pos in self.portfolio.positions.items()
+        }
         return CycleResult(
+            cycle_id=cycle_id,
             decisions=decisions,
             equity_usdt=final.equity_usdt,
             cash_usdt=final.cash_usdt,
+            positions=positions,
         )

@@ -31,3 +31,7 @@ memory:
 
 execution:
   fee_bps: 10  # 0.10% por lado (simulação paper)
+
+runtime:
+  cycle_interval_seconds: 3600  # 1h entre ciclos no run-loop
+  log_dir: data/logs

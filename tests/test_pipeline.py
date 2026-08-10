@@ -3,7 +3,6 @@ from pathlib import Path
 
 from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
-from financeiros.capital.portfolio import Portfolio
 from financeiros.config import AppConfig
 from financeiros.data.market import MarketDataService
 from financeiros.data.providers.binance import BinancePublicClient
@@ -49,16 +48,26 @@ def test_pipeline_run_once_paper(tmp_path: Path):
     config.memory.db_path = str(tmp_path / "mem.db")
     config.analysis.min_signal_strength = 0.5  # força HOLD na maioria dos casos
 
+    memory = MemoryStore(config.memory.db_path)
+    portfolio = memory.load_portfolio(config.capital.starting_cash_usdt)
     pipeline = TradingPipeline(
         config=config,
         market=MarketDataService(FakeClient()),
         signals=SignalEngine(config.analysis),
         risk=RiskEngine(config.analysis, config.capital),
-        portfolio=Portfolio(config.capital.starting_cash_usdt),
-        memory=MemoryStore(config.memory.db_path),
+        portfolio=portfolio,
+        memory=memory,
         broker=PaperBroker(config.execution),
     )
     result = pipeline.run_once()
     assert len(result.decisions) == 1
     assert result.equity_usdt > 0
     assert result.decisions[0].symbol == "BTCUSDT"
+    assert result.cycle_id >= 1
+
+    # Segundo ciclo reutiliza estado persistido
+    memory2 = MemoryStore(config.memory.db_path)
+    portfolio2 = memory2.load_portfolio(config.capital.starting_cash_usdt)
+    assert portfolio2.cash_usdt == result.cash_usdt
+    status = memory2.get_status()
+    assert status["last_cycle"]["id"] == result.cycle_id
