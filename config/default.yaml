@@ -19,6 +19,11 @@ analysis:
   min_signal_strength: 0.15
   max_volatility: 0.08  # desvio-padrão relativo das retornos recentes
 
+exits:
+  enabled: true
+  stop_loss_pct: 0.03     # sai se cair 3% abaixo do preço médio de entrada
+  take_profit_pct: 0.06   # realiza se subir 6% acima da entrada
+
 capital:
   starting_cash_usdt: 1000.0
   risk_per_trade: 0.01      # 1% do equity por trade

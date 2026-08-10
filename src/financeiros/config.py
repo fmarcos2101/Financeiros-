@@ -27,6 +27,14 @@ class AnalysisConfig(BaseModel):
     max_volatility: float = 0.08
 
 
+class ExitsConfig(BaseModel):
+    """Saídas automáticas por posição (prioridade sobre sinal de entrada)."""
+
+    enabled: bool = True
+    stop_loss_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    take_profit_pct: float = Field(default=0.06, ge=0.0, le=5.0)
+
+
 class CapitalConfig(BaseModel):
     starting_cash_usdt: float = 1000.0
     risk_per_trade: float = 0.01
@@ -56,6 +64,7 @@ class AppConfig(BaseModel):
     exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    exits: ExitsConfig = Field(default_factory=ExitsConfig)
     capital: CapitalConfig = Field(default_factory=CapitalConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

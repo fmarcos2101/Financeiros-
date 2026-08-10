@@ -44,6 +44,7 @@ def _result_payload(result) -> dict:
         "equity_usdt": result.equity_usdt,
         "total_wealth_usdt": result.total_wealth_usdt,
         "reserve_skim_this_cycle": result.reserve_skim_this_cycle,
+        "exits_this_cycle": result.exits_this_cycle,
         "positions": result.positions,
         "decisions": [d.model_dump(mode="json") for d in result.decisions],
     }
@@ -163,6 +164,23 @@ def cmd_status(args: argparse.Namespace) -> int:
         status["total_wealth_usdt"] = round(cash + reserve, 6)
     status["reserve_skim_pct"] = config.capital.reserve_skim_pct
     status["reserve_enabled"] = config.capital.reserve_enabled
+    status["exits"] = {
+        "enabled": config.exits.enabled,
+        "stop_loss_pct": config.exits.stop_loss_pct,
+        "take_profit_pct": config.exits.take_profit_pct,
+    }
+    if status["positions"] and config.exits.enabled:
+        enriched_pos = []
+        for pos in status["positions"]:
+            avg = float(pos["avg_price"])
+            enriched_pos.append(
+                {
+                    **pos,
+                    "stop_loss": round(avg * (1 - config.exits.stop_loss_pct), 8),
+                    "take_profit": round(avg * (1 + config.exits.take_profit_pct), 8),
+                }
+            )
+        status["positions"] = enriched_pos
     print(json.dumps(status, indent=2, ensure_ascii=False))
     return 0
 

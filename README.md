@@ -10,10 +10,21 @@ Construir por partes:
 
 1. **Dados** — candles/preço via API pública Binance (`data-api.binance.vision`)
 2. **Análise** — sinal (SMA cross) + filtros de risco
-3. **Capital** — position sizing, portfólio persistido e **fundo reserva**
-4. **Memória** — SQLite com decisões, fills, lições e ciclos
-5. **Execução** — paper broker (live fica para depois)
-6. **Runtime** — `run-once` ou `run-loop` com logs
+3. **Saídas** — stop-loss / take-profit automáticos (prioridade sobre entrada)
+4. **Capital** — position sizing, portfólio persistido e **fundo reserva**
+5. **Memória** — SQLite com decisões, fills, lições e ciclos
+6. **Execução** — paper broker (live fica para depois)
+7. **Runtime** — `run-once` ou `run-loop` com logs
+
+### Saídas automáticas
+
+Com posição aberta, o ciclo checa primeiro:
+
+- **Stop-loss** — se o preço (low/close) cair `stop_loss_pct` abaixo da entrada
+- **Take-profit** — se o preço (high/close) subir `take_profit_pct` acima da entrada
+
+Se stop e TP caem no mesmo candle, prevalece o **stop** (cenário conservador).  
+Stop-loss também grava uma lição automática na memória.
 
 ### Fundo reserva
 
@@ -84,9 +95,14 @@ financeiros reset-portfolio --yes
 financeiros reset-portfolio --yes --keep-reserve   # preserva o fundo reserva
 ```
 
-Ajuste o percentual em `config/default.yaml`:
+Ajuste em `config/default.yaml`:
 
 ```yaml
+exits:
+  enabled: true
+  stop_loss_pct: 0.03
+  take_profit_pct: 0.06
+
 capital:
   reserve_enabled: true
   reserve_skim_pct: 0.20
@@ -100,7 +116,7 @@ pytest -q
 
 ## Próximos passos sugeridos
 
-- Stops / take-profit e regras de saída
-- Mais features de mercado (funding, open interest)
+- Trailing stop
 - Backtest offline sobre histórico
+- Mais features de mercado (funding, open interest)
 - Live trading só depois de métricas estáveis em paper

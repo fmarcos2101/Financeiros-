@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from financeiros.analysis.exits import ExitAdvice, ExitEngine
 from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
 from financeiros.capital.portfolio import Portfolio
@@ -23,10 +24,11 @@ class CycleResult:
     total_wealth_usdt: float
     positions: dict[str, dict]
     reserve_skim_this_cycle: float
+    exits_this_cycle: int
 
 
 class TradingPipeline:
-    """Orquestra: dados → sinal → risco → memória → (paper) execução → persistência."""
+    """Orquestra: dados → saídas → sinal → risco → memória → paper → persistência."""
 
     def __init__(
         self,
@@ -37,6 +39,7 @@ class TradingPipeline:
         portfolio: Portfolio,
         memory: MemoryStore,
         broker: PaperBroker,
+        exits: ExitEngine | None = None,
     ):
         self.config = config
         self.market = market
@@ -45,12 +48,65 @@ class TradingPipeline:
         self.portfolio = portfolio
         self.memory = memory
         self.broker = broker
+        self.exits = exits or ExitEngine(config.exits)
 
     def _skim_pct(self) -> float:
         capital = self.config.capital
         if not capital.reserve_enabled:
             return 0.0
         return float(capital.reserve_skim_pct)
+
+    def _apply_approved_trade(self, decision: Decision, skim_pct: float) -> float:
+        """Executa fill + reserva. Retorna valor skimado."""
+        skimmed = 0.0
+        if not (decision.approved and decision.side in (Side.BUY, Side.SELL)):
+            return skimmed
+
+        fill = self.broker.execute(
+            symbol=decision.symbol,
+            side=decision.side,
+            quantity=decision.quantity,
+            price=decision.price,
+        )
+        outcome = self.portfolio.apply_fill(fill, reserve_skim_pct=skim_pct)
+        self.memory.record_fill(fill)
+        decision.metadata["realized_pnl"] = outcome.realized_pnl
+        decision.metadata["reserve_skim"] = outcome.reserve_skim
+        if outcome.reserve_skim > 0:
+            skimmed = outcome.reserve_skim
+            decision.tags.append("reserve_skim")
+            decision.rationale += (
+                f" Reserva: +{outcome.reserve_skim:.4f} USDT "
+                f"({skim_pct:.0%} do lucro {outcome.realized_pnl:.4f})."
+            )
+            self.memory.record_reserve_transfer(
+                amount=outcome.reserve_skim,
+                realized_pnl=outcome.realized_pnl,
+                skim_pct=skim_pct,
+                symbol=decision.symbol,
+                note="Skim automático sobre lucro realizado",
+            )
+        self.memory.save_portfolio(self.portfolio)
+        return skimmed
+
+    def _decision_from_exit(self, advice: ExitAdvice) -> Decision:
+        return Decision(
+            symbol=advice.symbol,
+            side=Side.SELL,
+            approved=True,
+            rationale=advice.rationale,
+            signal_strength=1.0,
+            price=advice.fill_price,
+            quantity=advice.quantity,
+            notional=round(advice.quantity * advice.fill_price, 6),
+            tags=["paper", "exit", advice.reason, "sell"],
+            metadata={
+                "exit_reason": advice.reason,
+                "trigger_price": advice.trigger_price,
+                "pnl_pct": advice.pnl_pct,
+                "forced_exit": True,
+            },
+        )
 
     def run_once(self) -> CycleResult:
         if self.config.mode != "paper":
@@ -62,6 +118,7 @@ class TradingPipeline:
         prices: dict[str, float] = {}
         decisions: list[Decision] = []
         skim_total = 0.0
+        exits_count = 0
         skim_pct = self._skim_pct()
 
         for symbol in self.config.universe.symbols:
@@ -70,6 +127,32 @@ class TradingPipeline:
                 interval=self.config.universe.interval,
                 limit=self.config.universe.lookback_candles,
             )
+            mark_price = candles[-1].close if candles else self.market.get_price(symbol)
+            prices[symbol] = mark_price
+
+            # 1) Saídas automáticas têm prioridade sobre novos sinais
+            position = self.portfolio.positions.get(symbol)
+            if position and position.quantity > 0:
+                advice = self.exits.evaluate(position, candles)
+                if advice is not None:
+                    decision = self._decision_from_exit(advice)
+                    skim_total += self._apply_approved_trade(decision, skim_pct)
+                    if advice.reason == "stop_loss":
+                        self.memory.add_lesson(
+                            lesson=(
+                                f"Stop-loss em {symbol}: pnl {advice.pnl_pct:.2%}. "
+                                "Reavaliar entrada em volatilidade semelhante."
+                            ),
+                            symbol=symbol,
+                            tags=["auto", "stop_loss"],
+                        )
+                    decision_id = self.memory.record_decision(decision)
+                    decision.metadata["decision_id"] = decision_id
+                    decisions.append(decision)
+                    exits_count += 1
+                    continue
+
+            # 2) Fluxo normal de sinal
             signal = self.signals.evaluate(candles)
             prices[symbol] = signal.price
 
@@ -114,33 +197,7 @@ class TradingPipeline:
                     decision.rationale += " Bloqueado por memória: volatilidade ainda elevada."
                     decision.tags.append("memory_block")
 
-            if decision.approved and decision.side in (Side.BUY, Side.SELL):
-                fill = self.broker.execute(
-                    symbol=decision.symbol,
-                    side=decision.side,
-                    quantity=decision.quantity,
-                    price=decision.price,
-                )
-                outcome = self.portfolio.apply_fill(fill, reserve_skim_pct=skim_pct)
-                self.memory.record_fill(fill)
-                decision.metadata["realized_pnl"] = outcome.realized_pnl
-                decision.metadata["reserve_skim"] = outcome.reserve_skim
-                if outcome.reserve_skim > 0:
-                    skim_total += outcome.reserve_skim
-                    decision.tags.append("reserve_skim")
-                    decision.rationale += (
-                        f" Reserva: +{outcome.reserve_skim:.4f} USDT "
-                        f"({skim_pct:.0%} do lucro {outcome.realized_pnl:.4f})."
-                    )
-                    self.memory.record_reserve_transfer(
-                        amount=outcome.reserve_skim,
-                        realized_pnl=outcome.realized_pnl,
-                        skim_pct=skim_pct,
-                        symbol=decision.symbol,
-                        note="Skim automático sobre lucro realizado",
-                    )
-                self.memory.save_portfolio(self.portfolio)
-
+            skim_total += self._apply_approved_trade(decision, skim_pct)
             decision_id = self.memory.record_decision(decision)
             decision.metadata["decision_id"] = decision_id
             decisions.append(decision)
@@ -167,6 +224,12 @@ class TradingPipeline:
                 "quantity": pos.quantity,
                 "avg_price": pos.avg_price,
                 "mark_price": prices.get(symbol, pos.avg_price),
+                "stop_loss": round(pos.avg_price * (1 - self.config.exits.stop_loss_pct), 8)
+                if self.config.exits.enabled
+                else None,
+                "take_profit": round(pos.avg_price * (1 + self.config.exits.take_profit_pct), 8)
+                if self.config.exits.enabled
+                else None,
             }
             for symbol, pos in self.portfolio.positions.items()
         }
@@ -179,4 +242,5 @@ class TradingPipeline:
             total_wealth_usdt=final.total_wealth_usdt,
             positions=positions,
             reserve_skim_this_cycle=round(skim_total, 8),
+            exits_this_cycle=exits_count,
         )
