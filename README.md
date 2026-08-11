@@ -158,7 +158,25 @@ nunca visto — com veredicto PASS/FAIL para reduzir overfitting.
 pytest -q
 ```
 
+## Paper em loop
+
+```bash
+# direto
+financeiros run-loop --interval 3600
+
+# ou via script
+./scripts/start-paper-loop.sh
+```
+
+Acompanhe com:
+
+```bash
+financeiros status
+financeiros report --text
+financeiros memory --limit 20
+```
+
 ## Próximos passos sugeridos
 
-- Rodar paper (`run-loop`) e acompanhar `report` / `status`
+- Acompanhar paper por alguns dias (`status` / `report`)
 - Live trading só depois de OOS PASS estável + paper consistente
