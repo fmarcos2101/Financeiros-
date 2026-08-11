@@ -98,6 +98,18 @@ class MemoryStore:
                     skim_pct REAL NOT NULL,
                     note TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS robot_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    halted INTEGER NOT NULL DEFAULT 0,
+                    halt_reason TEXT,
+                    halted_at TEXT,
+                    day_anchor_date TEXT,
+                    day_start_wealth REAL,
+                    week_anchor_date TEXT,
+                    week_start_wealth REAL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             self._migrate(conn)
@@ -417,6 +429,7 @@ class MemoryStore:
 
         cash = float(cash_row["cash_usdt"]) if cash_row else None
         reserve = float(cash_row["reserve_usdt"] or 0.0) if cash_row else 0.0
+        robot = self.get_robot_state()
         return {
             "cash_usdt": cash,
             "reserve_usdt": reserve,
@@ -426,6 +439,15 @@ class MemoryStore:
             "fill_count": fill_count,
             "reserve_skimmed_total": float(reserve_total),
             "last_cycle": dict(last_cycle) if last_cycle else None,
+            "circuit_breaker": {
+                "halted": bool(robot["halted"]) if robot else False,
+                "reason": robot.get("halt_reason") if robot else None,
+                "halted_at": robot.get("halted_at") if robot else None,
+                "day_anchor_date": robot.get("day_anchor_date") if robot else None,
+                "day_start_wealth": robot.get("day_start_wealth") if robot else None,
+                "week_anchor_date": robot.get("week_anchor_date") if robot else None,
+                "week_start_wealth": robot.get("week_start_wealth") if robot else None,
+            },
         }
 
     def recent_cycles(self, limit: int = 10) -> list[dict]:
@@ -467,3 +489,76 @@ class MemoryStore:
                 """,
                 (float(starting_cash_usdt), reserve, now),
             )
+
+    def get_robot_state(self) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM robot_state WHERE id = 1").fetchone()
+        return dict(row) if row else None
+
+    def save_circuit_state(
+        self,
+        *,
+        halted: bool,
+        reason: str | None,
+        halted_at: str | None,
+        day_anchor_date: str,
+        day_start_wealth: float,
+        week_anchor_date: str,
+        week_start_wealth: float,
+    ) -> None:
+        now = utc_now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO robot_state (
+                    id, halted, halt_reason, halted_at,
+                    day_anchor_date, day_start_wealth,
+                    week_anchor_date, week_start_wealth, updated_at
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    halted = excluded.halted,
+                    halt_reason = excluded.halt_reason,
+                    halted_at = excluded.halted_at,
+                    day_anchor_date = excluded.day_anchor_date,
+                    day_start_wealth = excluded.day_start_wealth,
+                    week_anchor_date = excluded.week_anchor_date,
+                    week_start_wealth = excluded.week_start_wealth,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    int(halted),
+                    reason,
+                    halted_at,
+                    day_anchor_date,
+                    float(day_start_wealth),
+                    week_anchor_date,
+                    float(week_start_wealth),
+                    now,
+                ),
+            )
+
+    def resume_circuit(self) -> None:
+        """Libera halt manualmente; preserva âncoras de dia/semana."""
+        state = self.get_robot_state() or {}
+        self.save_circuit_state(
+            halted=False,
+            reason=None,
+            halted_at=None,
+            day_anchor_date=state.get("day_anchor_date") or utc_now().date().isoformat(),
+            day_start_wealth=float(state.get("day_start_wealth") or 0.0),
+            week_anchor_date=state.get("week_anchor_date") or utc_now().date().isoformat(),
+            week_start_wealth=float(state.get("week_start_wealth") or 0.0),
+        )
+
+    def halt_circuit(self, reason: str) -> None:
+        state = self.get_robot_state() or {}
+        now = utc_now().isoformat()
+        self.save_circuit_state(
+            halted=True,
+            reason=reason,
+            halted_at=now,
+            day_anchor_date=state.get("day_anchor_date") or utc_now().date().isoformat(),
+            day_start_wealth=float(state.get("day_start_wealth") or 0.0),
+            week_anchor_date=state.get("week_anchor_date") or utc_now().date().isoformat(),
+            week_start_wealth=float(state.get("week_start_wealth") or 0.0),
+        )

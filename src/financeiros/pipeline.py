@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from financeiros.analysis.circuit import CircuitBreaker, CircuitSnapshot
 from financeiros.analysis.exits import ExitAdvice, ExitEngine
 from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
@@ -25,10 +26,11 @@ class CycleResult:
     positions: dict[str, dict]
     reserve_skim_this_cycle: float
     exits_this_cycle: int
+    circuit: dict
 
 
 class TradingPipeline:
-    """Orquestra: dados → saídas → sinal → risco → memória → paper → persistência."""
+    """Orquestra: dados → circuit → saídas → sinal → risco → paper → persistência."""
 
     def __init__(
         self,
@@ -40,6 +42,7 @@ class TradingPipeline:
         memory: MemoryStore,
         broker: PaperBroker,
         exits: ExitEngine | None = None,
+        circuit: CircuitBreaker | None = None,
     ):
         self.config = config
         self.market = market
@@ -49,6 +52,7 @@ class TradingPipeline:
         self.memory = memory
         self.broker = broker
         self.exits = exits or ExitEngine(config.exits)
+        self.circuit = circuit or CircuitBreaker(config.circuit_breaker)
 
     def _skim_pct(self) -> float:
         capital = self.config.capital
@@ -108,6 +112,28 @@ class TradingPipeline:
             },
         )
 
+    def _sync_circuit(self, wealth_usdt: float) -> CircuitSnapshot:
+        snap = self.circuit.evaluate(
+            wealth_usdt=wealth_usdt,
+            now=utc_now(),
+            state=self.memory.get_robot_state(),
+        )
+        self.memory.save_circuit_state(
+            halted=snap.halted,
+            reason=snap.reason,
+            halted_at=snap.halted_at,
+            day_anchor_date=snap.day_anchor_date,
+            day_start_wealth=snap.day_start_wealth,
+            week_anchor_date=snap.week_anchor_date,
+            week_start_wealth=snap.week_start_wealth,
+        )
+        if snap.newly_tripped:
+            self.memory.add_lesson(
+                lesson=f"Circuit breaker ativado: {snap.reason}",
+                tags=["auto", "circuit_breaker"],
+            )
+        return snap
+
     def run_once(self) -> CycleResult:
         if self.config.mode != "paper":
             raise RuntimeError(
@@ -116,25 +142,42 @@ class TradingPipeline:
 
         started_at = utc_now()
         prices: dict[str, float] = {}
+        candles_by_symbol: dict[str, list] = {}
         decisions: list[Decision] = []
         skim_total = 0.0
         exits_count = 0
         skim_pct = self._skim_pct()
 
+        # Prefetch para MTM + circuit breaker antes das entradas
         for symbol in self.config.universe.symbols:
             candles = self.market.get_candles(
                 symbol=symbol,
                 interval=self.config.universe.interval,
                 limit=self.config.universe.lookback_candles,
             )
-            mark_price = candles[-1].close if candles else self.market.get_price(symbol)
-            prices[symbol] = mark_price
+            candles_by_symbol[symbol] = candles
+            prices[symbol] = candles[-1].close if candles else self.market.get_price(symbol)
 
-            # 1) Saídas automáticas têm prioridade sobre novos sinais
+        pre_snap = self.portfolio.mark_to_market(prices)
+        circuit_snap = self._sync_circuit(pre_snap.total_wealth_usdt)
+        block_entries = (
+            circuit_snap.halted
+            and self.config.circuit_breaker.enabled
+            and self.config.circuit_breaker.block_new_entries
+        )
+        allow_exits = (
+            (not circuit_snap.halted)
+            or self.config.circuit_breaker.allow_exits
+            or not self.config.circuit_breaker.enabled
+        )
+
+        for symbol in self.config.universe.symbols:
+            candles = candles_by_symbol[symbol]
+
+            # 1) Saídas automáticas (permitidas mesmo com circuit breaker)
             position = self.portfolio.positions.get(symbol)
             if position and position.quantity > 0:
-                advice = self.exits.evaluate(position, candles)
-                # Persiste pico atualizado pelo trailing mesmo sem saída
+                advice = self.exits.evaluate(position, candles) if allow_exits else None
                 self.memory.save_portfolio(self.portfolio)
                 if advice is not None:
                     decision = self._decision_from_exit(advice)
@@ -199,6 +242,17 @@ class TradingPipeline:
                     decision.rationale += " Bloqueado por memória: volatilidade ainda elevada."
                     decision.tags.append("memory_block")
 
+            # Circuit breaker: bloqueia novas compras
+            if decision.approved and decision.side == Side.BUY and block_entries:
+                decision.approved = False
+                decision.quantity = 0.0
+                decision.notional = 0.0
+                decision.rationale += (
+                    f" Bloqueado por circuit breaker ({circuit_snap.reason})."
+                )
+                decision.tags.append("circuit_block")
+                decision.metadata["circuit_halted"] = True
+
             skim_total += self._apply_approved_trade(decision, skim_pct)
             decision_id = self.memory.record_decision(decision)
             decision.metadata["decision_id"] = decision_id
@@ -210,6 +264,8 @@ class TradingPipeline:
 
         final = self.portfolio.mark_to_market(prices)
         self.memory.save_portfolio(self.portfolio)
+        # Reavalia circuit com wealth final do ciclo
+        circuit_final = self._sync_circuit(final.total_wealth_usdt)
         finished_at = utc_now()
         cycle_id = self.memory.record_cycle(
             started_at=started_at.isoformat(),
@@ -251,4 +307,5 @@ class TradingPipeline:
             positions=positions,
             reserve_skim_this_cycle=round(skim_total, 8),
             exits_this_cycle=exits_count,
+            circuit=circuit_final.to_dict(),
         )

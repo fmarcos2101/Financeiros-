@@ -49,6 +49,7 @@ def _result_payload(result) -> dict:
         "total_wealth_usdt": result.total_wealth_usdt,
         "reserve_skim_this_cycle": result.reserve_skim_this_cycle,
         "exits_this_cycle": result.exits_this_cycle,
+        "circuit": result.circuit,
         "positions": result.positions,
         "decisions": [d.model_dump(mode="json") for d in result.decisions],
     }
@@ -61,14 +62,17 @@ def cmd_run_once(args: argparse.Namespace) -> int:
     result = pipeline.run_once()
     payload = _result_payload(result)
     logger.info(
-        "cycle=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f approved=%s",
+        "cycle=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f halted=%s approved=%s",
         result.cycle_id,
         result.cash_usdt,
         result.reserve_usdt,
         result.equity_usdt,
         result.total_wealth_usdt,
+        result.circuit.get("halted"),
         [d.symbol for d in result.decisions if d.approved],
     )
+    if result.circuit.get("halted"):
+        logger.warning("Circuit breaker ATIVO: %s", result.circuit.get("reason"))
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 
@@ -94,15 +98,21 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
             try:
                 result = pipeline.run_once()
                 logger.info(
-                    "cycle_n=%s cycle_id=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f decisions=%s",
+                    "cycle_n=%s cycle_id=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f halted=%s decisions=%s",
                     cycle_n,
                     result.cycle_id,
                     result.cash_usdt,
                     result.reserve_usdt,
                     result.equity_usdt,
                     result.total_wealth_usdt,
+                    result.circuit.get("halted"),
                     len(result.decisions),
                 )
+                if result.circuit.get("halted"):
+                    logger.warning(
+                        "Circuit breaker ativo — novas compras bloqueadas (%s)",
+                        result.circuit.get("reason"),
+                    )
                 print(json.dumps(_result_payload(result), indent=2, ensure_ascii=False))
             except Exception:
                 logger.exception("Falha no ciclo %s — tentará novamente no próximo intervalo", cycle_n)
@@ -168,6 +178,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         status["total_wealth_usdt"] = round(cash + reserve, 6)
     status["reserve_skim_pct"] = config.capital.reserve_skim_pct
     status["reserve_enabled"] = config.capital.reserve_enabled
+    status["circuit_breaker_config"] = {
+        "enabled": config.circuit_breaker.enabled,
+        "max_daily_loss_pct": config.circuit_breaker.max_daily_loss_pct,
+        "max_weekly_loss_pct": config.circuit_breaker.max_weekly_loss_pct,
+        "block_new_entries": config.circuit_breaker.block_new_entries,
+        "allow_exits": config.circuit_breaker.allow_exits,
+        "auto_resume_next_day": config.circuit_breaker.auto_resume_next_day,
+    }
     status["exits"] = {
         "enabled": config.exits.enabled,
         "stop_loss_pct": config.exits.stop_loss_pct,
@@ -304,6 +322,31 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_resume(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    if not args.yes:
+        print("Confirme com --yes para liberar o circuit breaker.", file=sys.stderr)
+        return 2
+    memory = MemoryStore(config.memory.db_path)
+    memory.resume_circuit()
+    state = memory.get_robot_state()
+    print(json.dumps({"resumed": True, "circuit_breaker": state}, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_halt(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    if not args.yes:
+        print("Confirme com --yes para pausar novas entradas manualmente.", file=sys.stderr)
+        return 2
+    memory = MemoryStore(config.memory.db_path)
+    reason = args.reason or "manual_halt"
+    memory.halt_circuit(reason)
+    state = memory.get_robot_state()
+    print(json.dumps({"halted": True, "circuit_breaker": state}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_reset_portfolio(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if not args.yes:
@@ -390,6 +433,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mantém o fundo reserva ao resetar o capital de trading",
     )
     reset.set_defaults(func=cmd_reset_portfolio)
+
+    resume = sub.add_parser("resume", help="Libera circuit breaker (permite novas compras)")
+    resume.add_argument("--yes", action="store_true", help="Confirma o resume")
+    resume.set_defaults(func=cmd_resume)
+
+    halt = sub.add_parser("halt", help="Pausa novas compras manualmente")
+    halt.add_argument("--yes", action="store_true", help="Confirma o halt")
+    halt.add_argument("--reason", default="manual_halt", help="Motivo do halt")
+    halt.set_defaults(func=cmd_halt)
 
     bt = sub.add_parser("backtest", help="Replay offline da estratégia no histórico")
     bt.add_argument("--days", type=int, default=60, help="Janela histórica em dias")

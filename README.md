@@ -16,6 +16,7 @@ Construir por partes:
 6. **Execução** — paper broker (live fica para depois)
 7. **Runtime** — `run-once` ou `run-loop` com logs
 8. **Backtest** — replay offline no histórico com métricas
+9. **Circuit breaker** — pausa novas compras em perda diária/semanal excessiva
 
 ### Saídas automáticas
 
@@ -26,6 +27,20 @@ Com posição aberta, o ciclo checa primeiro:
 - **Take-profit** — se o preço subir `take_profit_pct` acima da entrada
 
 Se stop e TP caem no mesmo candle, prevalece o **stop** (cenário conservador).
+
+### Circuit breaker
+
+Se a wealth cair mais que o limite do **dia** (default 3%) ou da **semana** (default 7%):
+
+- novas **compras** são bloqueadas
+- **saídas** (stop/trailing/TP) continuam ativas
+- halt diário pode liberar sozinho no próximo dia UTC (`auto_resume_next_day`)
+
+```bash
+financeiros status
+financeiros halt --yes --reason "pausa manual"
+financeiros resume --yes
+```
 
 ### Fundo reserva
 
@@ -130,5 +145,6 @@ pytest -q
 
 ## Próximos passos sugeridos
 
-- Mais features de mercado (funding, open interest)
+- Relatório diário / alertas
+- Backtest out-of-sample
 - Live trading só depois de métricas estáveis em paper + backtest/tune

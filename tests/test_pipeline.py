@@ -64,6 +64,7 @@ def test_pipeline_run_once_paper(tmp_path: Path):
     assert result.equity_usdt > 0
     assert result.decisions[0].symbol == "BTCUSDT"
     assert result.cycle_id >= 1
+    assert "halted" in result.circuit
 
     # Segundo ciclo reutiliza estado persistido
     memory2 = MemoryStore(config.memory.db_path)

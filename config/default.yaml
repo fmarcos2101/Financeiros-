@@ -61,3 +61,11 @@ execution:
 runtime:
   cycle_interval_seconds: 3600  # 1h entre ciclos no run-loop
   log_dir: data/logs
+
+circuit_breaker:
+  enabled: true
+  max_daily_loss_pct: 0.03    # pausa entradas se perder 3% no dia (UTC)
+  max_weekly_loss_pct: 0.07   # ou 7% na semana
+  block_new_entries: true
+  allow_exits: true           # stops/TP continuam mesmo haltado
+  auto_resume_next_day: true  # libera halt diário na virada do dia UTC

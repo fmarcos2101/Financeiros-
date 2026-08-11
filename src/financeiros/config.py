@@ -75,6 +75,18 @@ class RuntimeConfig(BaseModel):
     log_dir: str = "data/logs"
 
 
+class CircuitBreakerConfig(BaseModel):
+    """Pausa novas compras se a perda do dia/semana estourar o limite."""
+
+    enabled: bool = True
+    max_daily_loss_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    max_weekly_loss_pct: float = Field(default=0.07, ge=0.0, le=1.0)
+    block_new_entries: bool = True
+    allow_exits: bool = True
+    # Se o halt foi por perda diária, libera automaticamente no próximo dia UTC
+    auto_resume_next_day: bool = True
+
+
 class AppConfig(BaseModel):
     mode: str = "paper"
     exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
@@ -85,6 +97,7 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
 
 
 class Settings(BaseSettings):
