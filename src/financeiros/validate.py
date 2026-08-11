@@ -72,30 +72,22 @@ class OutOfSampleValidator:
         self.config = config
         self.client = client
 
-    def run(
+    def _evaluate_split(
         self,
         *,
-        train_days: int = 60,
-        holdout_days: int = 30,
-        symbols: list[str] | None = None,
-        interval: str | None = None,
-        tune: bool = True,
-        max_dd_limit: float = 8.0,
-        min_holdout_return_pct: float = -2.0,
-        max_holdout_dd_pct: float = 6.0,
-        min_holdout_trades: int = 2,
-        max_return_drop_pct: float = 5.0,
-        history: dict[str, list[Candle]] | None = None,
+        history: dict[str, list[Candle]],
+        split_at: datetime,
+        train_days: int,
+        holdout_days: int,
+        symbols: list[str],
+        interval: str,
+        tune: bool,
+        max_dd_limit: float,
+        min_holdout_return_pct: float,
+        max_holdout_dd_pct: float,
+        min_holdout_trades: int,
+        max_return_drop_pct: float,
     ) -> dict:
-        symbols = symbols or list(self.config.universe.symbols)
-        interval = interval or self.config.universe.interval
-        total_days = train_days + holdout_days
-
-        probe = BacktestEngine(self.config, client=self.client)
-        if history is None:
-            history = probe.fetch_history(symbols, interval, total_days)
-
-        split_at = datetime.now(timezone.utc) - timedelta(days=holdout_days)
         train_history = _filter_history_until(history, split_at)
         for symbol, candles in train_history.items():
             if len(candles) < self.config.analysis.slow_sma + 5:
@@ -123,17 +115,14 @@ class OutOfSampleValidator:
                 cfg.exits.trailing_pct = best["trailing_pct"]
                 cfg.exits.trailing_activation_pct = best["trailing_activation_pct"]
 
-        train_engine = BacktestEngine(cfg, client=self.client)
-        train_report = train_engine.run(
+        train_report = BacktestEngine(cfg, client=self.client).run(
             days=train_days,
             symbols=symbols,
             interval=interval,
             history=train_history,
             curve_stride=10_000,
         )
-
-        holdout_engine = BacktestEngine(cfg, client=self.client)
-        holdout_report = holdout_engine.run(
+        holdout_report = BacktestEngine(cfg, client=self.client).run(
             days=holdout_days,
             symbols=symbols,
             interval=interval,
@@ -152,7 +141,6 @@ class OutOfSampleValidator:
             min_holdout_trades=min_holdout_trades,
             max_return_drop_pct=max_return_drop_pct,
         )
-
         return {
             "train_days": train_days,
             "holdout_days": holdout_days,
@@ -185,4 +173,131 @@ class OutOfSampleValidator:
             "passed": passed,
             "fail_reasons": fail_reasons,
             "verdict": "PASS" if passed else "FAIL",
+        }
+
+    def run(
+        self,
+        *,
+        train_days: int = 60,
+        holdout_days: int = 30,
+        symbols: list[str] | None = None,
+        interval: str | None = None,
+        tune: bool = True,
+        max_dd_limit: float = 8.0,
+        min_holdout_return_pct: float = -2.0,
+        max_holdout_dd_pct: float = 6.0,
+        min_holdout_trades: int = 2,
+        max_return_drop_pct: float = 5.0,
+        history: dict[str, list[Candle]] | None = None,
+    ) -> dict:
+        symbols = symbols or list(self.config.universe.symbols)
+        interval = interval or self.config.universe.interval
+        total_days = train_days + holdout_days
+
+        probe = BacktestEngine(self.config, client=self.client)
+        if history is None:
+            history = probe.fetch_history(symbols, interval, total_days)
+
+        split_at = datetime.now(timezone.utc) - timedelta(days=holdout_days)
+        return self._evaluate_split(
+            history=history,
+            split_at=split_at,
+            train_days=train_days,
+            holdout_days=holdout_days,
+            symbols=symbols,
+            interval=interval,
+            tune=tune,
+            max_dd_limit=max_dd_limit,
+            min_holdout_return_pct=min_holdout_return_pct,
+            max_holdout_dd_pct=max_holdout_dd_pct,
+            min_holdout_trades=min_holdout_trades,
+            max_return_drop_pct=max_return_drop_pct,
+        )
+
+    def run_walk_forward(
+        self,
+        *,
+        folds: int = 3,
+        train_days: int = 60,
+        holdout_days: int = 30,
+        symbols: list[str] | None = None,
+        interval: str | None = None,
+        tune: bool = True,
+        max_dd_limit: float = 8.0,
+        min_holdout_return_pct: float = -2.0,
+        max_holdout_dd_pct: float = 6.0,
+        min_holdout_trades: int = 2,
+        max_return_drop_pct: float = 5.0,
+        history: dict[str, list[Candle]] | None = None,
+    ) -> dict:
+        """Vários splits OOS deslocados no tempo (walk-forward)."""
+        if folds < 2:
+            raise ValueError("walk-forward exige folds >= 2")
+
+        symbols = symbols or list(self.config.universe.symbols)
+        interval = interval or self.config.universe.interval
+        total_days = train_days + holdout_days * folds
+
+        probe = BacktestEngine(self.config, client=self.client)
+        if history is None:
+            history = probe.fetch_history(symbols, interval, total_days)
+
+        now = datetime.now(timezone.utc)
+        fold_results: list[dict] = []
+        for i in range(folds):
+            # fold 0 = mais recente; folds antigos empurram o split para trás
+            split_at = now - timedelta(days=holdout_days * (i + 1))
+            window_end = now - timedelta(days=holdout_days * i)
+            window_start = window_end - timedelta(days=train_days + holdout_days)
+            window_hist = {
+                symbol: [
+                    c
+                    for c in candles
+                    if window_start <= c.open_time < window_end
+                ]
+                for symbol, candles in history.items()
+            }
+            result = self._evaluate_split(
+                history=window_hist,
+                split_at=split_at,
+                train_days=train_days,
+                holdout_days=holdout_days,
+                symbols=symbols,
+                interval=interval,
+                tune=tune,
+                max_dd_limit=max_dd_limit,
+                min_holdout_return_pct=min_holdout_return_pct,
+                max_holdout_dd_pct=max_holdout_dd_pct,
+                min_holdout_trades=min_holdout_trades,
+                max_return_drop_pct=max_return_drop_pct,
+            )
+            result["fold"] = i
+            fold_results.append(result)
+
+        passes = sum(1 for r in fold_results if r["passed"])
+        avg_holdout_ret = (
+            sum(r["holdout"]["total_return_pct"] for r in fold_results) / len(fold_results)
+        )
+        avg_holdout_dd = (
+            sum(r["holdout"]["max_drawdown_pct"] for r in fold_results) / len(fold_results)
+        )
+        # Exige maioria dos folds (ou todos se folds==2)
+        required = folds if folds == 2 else (folds // 2 + 1)
+        passed = passes >= required
+
+        return {
+            "mode": "walk_forward",
+            "folds": folds,
+            "required_passes": required,
+            "passes": passes,
+            "passed": passed,
+            "verdict": "PASS" if passed else "FAIL",
+            "avg_holdout_return_pct": round(avg_holdout_ret, 4),
+            "avg_holdout_max_drawdown_pct": round(avg_holdout_dd, 4),
+            "fold_results": fold_results,
+            "symbols": symbols,
+            "interval": interval,
+            "train_days": train_days,
+            "holdout_days": holdout_days,
+            "tuned": bool(tune),
         }

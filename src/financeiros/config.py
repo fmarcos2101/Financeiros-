@@ -75,6 +75,8 @@ class RuntimeConfig(BaseModel):
     log_dir: str = "data/logs"
     report_dir: str = "data/logs/reports"
     emit_daily_report_in_loop: bool = True
+    # Heartbeat stale se não atualizar por 2x o intervalo (default 2h)
+    heartbeat_stale_seconds: int = 7200
     # Alertas do relatório (frações; warning antes do circuit breaker)
     alert_daily_loss_pct: float = Field(default=0.02, ge=0.0, le=1.0)
     alert_weekly_loss_pct: float = Field(default=0.05, ge=0.0, le=1.0)

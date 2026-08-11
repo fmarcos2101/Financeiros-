@@ -17,6 +17,7 @@ from financeiros.data.providers.binance import BinancePublicClient
 from financeiros.execution.paper import PaperBroker
 from financeiros.logging_setup import setup_logging
 from financeiros.memory.store import MemoryStore
+from financeiros.health import read_health, write_heartbeat
 from financeiros.pipeline import TradingPipeline
 from financeiros.report import DailyReporter
 from financeiros.validate import OutOfSampleValidator
@@ -61,8 +62,23 @@ def cmd_run_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     logger = setup_logging(config.runtime.log_dir)
     pipeline = build_pipeline(args.config)
-    result = pipeline.run_once()
+    try:
+        result = pipeline.run_once()
+    except Exception as exc:
+        write_heartbeat(
+            config.runtime.log_dir,
+            status="error",
+            detail=str(exc),
+        )
+        raise
     payload = _result_payload(result)
+    write_heartbeat(
+        config.runtime.log_dir,
+        cycle_id=result.cycle_id,
+        wealth_usdt=result.total_wealth_usdt,
+        halted=bool(result.circuit.get("halted")),
+        status="ok",
+    )
     logger.info(
         "cycle=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f halted=%s approved=%s",
         result.cycle_id,
@@ -112,6 +128,14 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
                             log_fn("ALERT [%s] %s: %s", alert.level, alert.code, alert.message)
 
                 result = pipeline.run_once()
+                write_heartbeat(
+                    config.runtime.log_dir,
+                    cycle_id=result.cycle_id,
+                    cycle_n=cycle_n,
+                    wealth_usdt=result.total_wealth_usdt,
+                    halted=bool(result.circuit.get("halted")),
+                    status="ok",
+                )
                 logger.info(
                     "cycle_n=%s cycle_id=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f halted=%s decisions=%s",
                     cycle_n,
@@ -129,7 +153,13 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
                         result.circuit.get("reason"),
                     )
                 print(json.dumps(_result_payload(result), indent=2, ensure_ascii=False))
-            except Exception:
+            except Exception as exc:
+                write_heartbeat(
+                    config.runtime.log_dir,
+                    cycle_n=cycle_n,
+                    status="error",
+                    detail=str(exc),
+                )
                 logger.exception("Falha no ciclo %s — tentará novamente no próximo intervalo", cycle_n)
 
             if max_cycles is not None and cycle_n >= max_cycles:
@@ -332,6 +362,18 @@ def cmd_tune(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_health(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    health = read_health(
+        config.runtime.log_dir,
+        stale_after_seconds=config.runtime.heartbeat_stale_seconds,
+    )
+    print(json.dumps(health, indent=2, ensure_ascii=False))
+    if health.get("alive"):
+        return 0
+    return 1
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     logger = setup_logging(config.runtime.log_dir)
@@ -342,14 +384,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     )
     interval = args.interval or config.universe.interval
     validator = OutOfSampleValidator(config)
-    logger.info(
-        "OOS validate train=%sd holdout=%sd tune=%s symbols=%s",
-        args.train_days,
-        args.holdout_days,
-        not args.no_tune,
-        symbols,
-    )
-    result = validator.run(
+    common = dict(
         train_days=args.train_days,
         holdout_days=args.holdout_days,
         symbols=symbols,
@@ -361,16 +396,47 @@ def cmd_validate(args: argparse.Namespace) -> int:
         min_holdout_trades=args.min_trades,
         max_return_drop_pct=args.max_drop,
     )
-    logger.info(
-        "OOS verdict=%s train_ret=%.2f%% holdout_ret=%.2f%% holdout_dd=%.2f%%",
-        result["verdict"],
-        result["train"]["total_return_pct"],
-        result["holdout"]["total_return_pct"],
-        result["holdout"]["max_drawdown_pct"],
-    )
-    if result["fail_reasons"]:
-        for reason in result["fail_reasons"]:
-            logger.warning("OOS fail: %s", reason)
+    if args.walk_forward:
+        logger.info(
+            "OOS walk-forward folds=%s train=%sd holdout=%sd tune=%s symbols=%s",
+            args.folds,
+            args.train_days,
+            args.holdout_days,
+            not args.no_tune,
+            symbols,
+        )
+        result = validator.run_walk_forward(folds=args.folds, **common)
+        logger.info(
+            "OOS walk-forward verdict=%s passes=%s/%s avg_holdout_ret=%.2f%% avg_dd=%.2f%%",
+            result["verdict"],
+            result["passes"],
+            result["folds"],
+            result["avg_holdout_return_pct"],
+            result["avg_holdout_max_drawdown_pct"],
+        )
+        for fold in result["fold_results"]:
+            if fold.get("fail_reasons"):
+                for reason in fold["fail_reasons"]:
+                    logger.warning("fold %s fail: %s", fold.get("fold"), reason)
+    else:
+        logger.info(
+            "OOS validate train=%sd holdout=%sd tune=%s symbols=%s",
+            args.train_days,
+            args.holdout_days,
+            not args.no_tune,
+            symbols,
+        )
+        result = validator.run(**common)
+        logger.info(
+            "OOS verdict=%s train_ret=%.2f%% holdout_ret=%.2f%% holdout_dd=%.2f%%",
+            result["verdict"],
+            result["train"]["total_return_pct"],
+            result["holdout"]["total_return_pct"],
+            result["holdout"]["max_drawdown_pct"],
+        )
+        if result.get("fail_reasons"):
+            for reason in result["fail_reasons"]:
+                logger.warning("OOS fail: %s", reason)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if args.save:
         out = Path(args.save)
@@ -496,6 +562,12 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="Mostra caixa, reserva, posições e último ciclo")
     status.set_defaults(func=cmd_status)
 
+    health = sub.add_parser(
+        "health",
+        help="Checa heartbeat do run-loop (vivo / stale / erro)",
+    )
+    health.set_defaults(func=cmd_health)
+
     reserve = sub.add_parser("reserve", help="Mostra fundo reserva e transferências")
     reserve.add_argument("--limit", type=int, default=20)
     reserve.set_defaults(func=cmd_reserve)
@@ -612,6 +684,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="Queda máxima train→holdout em pontos percentuais",
+    )
+    validate.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="Roda vários splits OOS deslocados (walk-forward)",
+    )
+    validate.add_argument(
+        "--folds",
+        type=int,
+        default=3,
+        help="Número de folds no walk-forward (default: 3)",
     )
     validate.add_argument("--save", default=None)
     validate.set_defaults(func=cmd_validate)

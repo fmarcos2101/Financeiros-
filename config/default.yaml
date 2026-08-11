@@ -63,6 +63,7 @@ runtime:
   log_dir: data/logs
   report_dir: data/logs/reports
   emit_daily_report_in_loop: true
+  heartbeat_stale_seconds: 7200  # health falha se heartbeat > 2h
   alert_daily_loss_pct: 0.02   # warning se perda do dia >= 2%
   alert_weekly_loss_pct: 0.05  # warning se perda da semana >= 5%
   alert_stop_count: 3

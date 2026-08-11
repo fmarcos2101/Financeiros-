@@ -14,11 +14,12 @@ Construir por partes:
 4. **Capital** — position sizing, portfólio persistido e **fundo reserva**
 5. **Memória** — SQLite com decisões, fills, lições e ciclos
 6. **Execução** — paper broker (live fica para depois)
-7. **Runtime** — `run-once` ou `run-loop` com logs
+7. **Runtime** — `run-once` ou `run-loop` com logs + heartbeat
 8. **Backtest** — replay offline no histórico com métricas
 9. **Circuit breaker** — pausa novas compras em perda diária/semanal excessiva
 10. **Relatório diário** — resumo + alertas (também no `run-loop`)
-11. **Validação OOS** — tune no treino e teste em holdout
+11. **Validação OOS** — holdout simples ou walk-forward
+12. **Health** — `financeiros health` checa se o loop ainda está vivo
 
 ### Saídas automáticas
 
@@ -147,10 +148,12 @@ financeiros backtest --days 60
 financeiros tune --days 60 --save data/logs/tune-last.json
 financeiros validate --train-days 60 --holdout-days 30
 financeiros validate --train-days 60 --holdout-days 30 --no-tune
+financeiros validate --walk-forward --folds 3 --train-days 60 --holdout-days 30 --no-tune
 ```
 
 O `validate` retuna (opcional) só no período de **treino** e mede o resultado no **holdout**  
-nunca visto — com veredicto PASS/FAIL para reduzir overfitting.
+nunca visto — com veredicto PASS/FAIL para reduzir overfitting.  
+Com `--walk-forward`, roda vários splits deslocados e exige maioria dos folds PASS.
 
 ## Testes
 
@@ -172,11 +175,16 @@ Acompanhe com:
 
 ```bash
 financeiros status
+financeiros health
 financeiros report --text
 financeiros memory --limit 20
 ```
 
+O `run-loop` / `run-once` gravam `data/logs/heartbeat.json`.  
+`financeiros health` falha (exit 1) se o heartbeat estiver ausente ou mais antigo que  
+`runtime.heartbeat_stale_seconds` (default 2h).
+
 ## Próximos passos sugeridos
 
-- Acompanhar paper por alguns dias (`status` / `report`)
-- Live trading só depois de OOS PASS estável + paper consistente
+- Acompanhar paper por alguns dias (`status` / `health` / `report`)
+- Live trading só depois de walk-forward OOS PASS estável + paper consistente
