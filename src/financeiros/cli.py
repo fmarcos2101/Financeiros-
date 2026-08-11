@@ -10,10 +10,16 @@ from pathlib import Path
 from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
 from financeiros.backtest import BacktestEngine
-from financeiros.config import load_config
+from financeiros.config import get_settings, load_config
 from financeiros.tune import StrategyTuner
 from financeiros.data.market import MarketDataService
 from financeiros.data.providers.binance import BinancePublicClient
+from financeiros.data.providers.binance_trading import (
+    LIVE_TRADING_URL,
+    TESTNET_TRADING_URL,
+    BinanceTradingClient,
+)
+from financeiros.execution.live import LiveBroker
 from financeiros.execution.paper import PaperBroker
 from financeiros.logging_setup import setup_logging
 from financeiros.memory.store import MemoryStore
@@ -22,6 +28,34 @@ from financeiros.health import read_health, write_heartbeat
 from financeiros.pipeline import TradingPipeline
 from financeiros.report import DailyReporter
 from financeiros.validate import OutOfSampleValidator
+
+
+def _trading_base_url(config) -> str:
+    if config.exchange.trading_base_url:
+        return config.exchange.trading_base_url
+    if config.mode == "live":
+        return LIVE_TRADING_URL
+    return TESTNET_TRADING_URL
+
+
+def build_broker(config):
+    if config.mode == "paper":
+        return PaperBroker(config.execution)
+    if config.mode in {"testnet", "live"}:
+        settings = get_settings()
+        if not settings.binance_api_key or not settings.binance_api_secret:
+            raise RuntimeError(
+                "Modo testnet/live exige BINANCE_API_KEY e BINANCE_API_SECRET no .env"
+            )
+        trading = BinanceTradingClient(
+            settings.binance_api_key,
+            settings.binance_api_secret,
+            base_url=_trading_base_url(config),
+            timeout_seconds=config.exchange.timeout_seconds,
+            recv_window_ms=config.execution.recv_window_ms,
+        )
+        return LiveBroker(config.execution, trading, mode=config.mode)
+    raise RuntimeError(f"Modo não suportado: {config.mode}")
 
 
 def build_pipeline(config_path: str | None = None) -> TradingPipeline:
@@ -40,8 +74,33 @@ def build_pipeline(config_path: str | None = None) -> TradingPipeline:
         risk=RiskEngine(config.analysis, config.capital),
         portfolio=portfolio,
         memory=memory,
-        broker=PaperBroker(config.execution),
+        broker=build_broker(config),
     )
+
+
+def _ensure_live_cli_allowed(config, args: argparse.Namespace) -> None:
+    """Bloqueia testnet/live sem confirmação explícita na CLI."""
+    if config.mode == "paper":
+        return
+    if config.mode == "testnet" and not getattr(args, "confirm_testnet", False):
+        raise SystemExit(
+            "Modo testnet: confirme com --confirm-testnet "
+            "(ainda pode estar em dry_run)."
+        )
+    if config.mode == "live" and not getattr(args, "confirm_live", False):
+        raise SystemExit(
+            "Modo LIVE: confirme com --confirm-live. "
+            "Use dry_run=true até validar; keys sem permissão de saque."
+        )
+    if (
+        config.mode == "live"
+        and not config.execution.dry_run
+        and not getattr(args, "confirm_live_orders", False)
+    ):
+        raise SystemExit(
+            "Modo LIVE com dry_run=false: confirme também com "
+            "--confirm-live-orders (ordens reais)."
+        )
 
 
 def _result_payload(result) -> dict:
@@ -61,7 +120,14 @@ def _result_payload(result) -> dict:
 
 def cmd_run_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    _ensure_live_cli_allowed(config, args)
     logger = setup_logging(config.runtime.log_dir)
+    logger.info(
+        "mode=%s dry_run=%s max_order_notional=%s",
+        config.mode,
+        config.execution.dry_run,
+        config.execution.max_order_notional_usdt,
+    )
     pipeline = build_pipeline(args.config)
     try:
         result = pipeline.run_once()
@@ -98,6 +164,7 @@ def cmd_run_once(args: argparse.Namespace) -> int:
 
 def cmd_run_loop(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    _ensure_live_cli_allowed(config, args)
     logger = setup_logging(config.runtime.log_dir)
     interval = args.interval or config.runtime.cycle_interval_seconds
     max_cycles = args.max_cycles
@@ -105,10 +172,11 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
     reporter = DailyReporter(config, memory=pipeline.memory)
 
     logger.info(
-        "Iniciando run-loop interval=%ss max_cycles=%s mode=%s",
+        "Iniciando run-loop interval=%ss max_cycles=%s mode=%s dry_run=%s",
         interval,
         max_cycles if max_cycles else "∞",
         config.mode,
+        config.execution.dry_run,
     )
 
     cycle_n = 0
@@ -385,6 +453,72 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_live_check(args: argparse.Namespace) -> int:
+    """Valida keys/conectividade sem colocar ordem."""
+    config = load_config(args.config)
+    if args.mode:
+        config.mode = args.mode
+    if config.mode == "paper":
+        config.mode = "testnet"
+    settings = get_settings()
+    if not settings.binance_api_key or not settings.binance_api_secret:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "BINANCE_API_KEY / BINANCE_API_SECRET ausentes no .env",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 1
+
+    client = BinanceTradingClient(
+        settings.binance_api_key,
+        settings.binance_api_secret,
+        base_url=_trading_base_url(config),
+        timeout_seconds=config.exchange.timeout_seconds,
+        recv_window_ms=config.execution.recv_window_ms,
+    )
+    try:
+        client.ping()
+        acct = client.account()
+        balances = {
+            b["asset"]: float(b["free"])
+            for b in acct.get("balances", [])
+            if float(b.get("free") or 0) > 0
+        }
+        top = dict(sorted(balances.items(), key=lambda kv: kv[1], reverse=True)[:12])
+        payload = {
+            "ok": True,
+            "mode": config.mode,
+            "trading_base_url": _trading_base_url(config),
+            "can_trade": acct.get("canTrade"),
+            "account_type": acct.get("accountType"),
+            "balances_free": top,
+            "dry_run_config": config.execution.dry_run,
+            "max_order_notional_usdt": config.execution.max_order_notional_usdt,
+            "note": "Nenhuma ordem foi enviada. live-check é somente leitura.",
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "mode": config.mode,
+                    "trading_base_url": _trading_base_url(config),
+                    "error": str(exc),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 1
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     logger = setup_logging(config.runtime.log_dir)
@@ -552,7 +686,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=None, help="Caminho do YAML de config")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run-once", help="Roda um ciclo de análise + paper trading")
+    run = sub.add_parser("run-once", help="Roda um ciclo de análise + execução")
+    run.add_argument(
+        "--confirm-testnet",
+        action="store_true",
+        help="Obrigatório quando mode=testnet",
+    )
+    run.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Obrigatório quando mode=live",
+    )
+    run.add_argument(
+        "--confirm-live-orders",
+        action="store_true",
+        help="Obrigatório em mode=live com dry_run=false (ordens reais)",
+    )
     run.set_defaults(func=cmd_run_once)
 
     loop = sub.add_parser("run-loop", help="Roda ciclos continuamente com intervalo")
@@ -568,7 +717,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Para após N ciclos (útil para teste)",
     )
+    loop.add_argument("--confirm-testnet", action="store_true")
+    loop.add_argument("--confirm-live", action="store_true")
+    loop.add_argument("--confirm-live-orders", action="store_true")
     loop.set_defaults(func=cmd_run_loop)
+
+    live_check = sub.add_parser(
+        "live-check",
+        help="Valida API keys Binance (account) sem enviar ordens",
+    )
+    live_check.add_argument(
+        "--mode",
+        choices=["testnet", "live"],
+        default=None,
+        help="Força testnet ou live para o check (default: testnet se config=paper)",
+    )
+    live_check.set_defaults(func=cmd_live_check)
 
     status = sub.add_parser("status", help="Mostra caixa, reserva, posições e último ciclo")
     status.set_defaults(func=cmd_status)

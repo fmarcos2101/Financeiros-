@@ -1,1 +1,1 @@
-"""Execução de ordens (paper primeiro)."""
+"""Execução de ordens (paper, testnet, live)."""

@@ -1,10 +1,11 @@
-mode: paper  # paper | live (live ainda não implementado)
+mode: paper  # paper | testnet | live
 
 exchange:
   name: binance
   # data-api.binance.vision: endpoint público de mercado (evita bloqueio 451 regional)
   base_url: https://data-api.binance.vision
   timeout_seconds: 15
+  # trading_base_url: null  # default: testnet.binance.vision ou api.binance.com
 
 universe:
   symbols:
@@ -56,7 +57,10 @@ memory:
   db_path: data/memory/financeiros.db
 
 execution:
-  fee_bps: 10  # 0.10% por lado (simulação paper)
+  fee_bps: 10  # 0.10% por lado (simulação / estimativa)
+  dry_run: true  # em testnet/live: true = não envia ordem de verdade
+  max_order_notional_usdt: 50  # teto duro por ordem (comece baixo)
+  recv_window_ms: 5000
 
 runtime:
   cycle_interval_seconds: 3600  # 1h entre ciclos no run-loop

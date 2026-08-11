@@ -190,19 +190,37 @@ O `run-loop` / `run-once` gravam `data/logs/heartbeat.json`.
 `financeiros health` falha (exit 1) se o heartbeat estiver ausente ou mais antigo que  
 `runtime.heartbeat_stale_seconds` (default 2h).
 
-## Binance / live trading
+## Binance: paper → testnet → live
 
-**Hoje o robô não opera na sua conta Binance.**  
-Ele só lê preços públicos e simula fills em paper no SQLite local.
+Default continua **paper** (sem keys). O caminho para operar de verdade:
 
-As variáveis `BINANCE_API_KEY` / `BINANCE_API_SECRET` no `.env` estão reservadas  
-para uma fase futura. Live exigiria:
+| mode | O que faz | Confirmação CLI |
+|------|-----------|-----------------|
+| `paper` | simula fills localmente | nenhuma |
+| `testnet` | Binance Spot Testnet | `--confirm-testnet` |
+| `live` | conta real | `--confirm-live` (+ `--confirm-live-orders` se `dry_run=false`) |
 
-1. paper estável + validação OOS/walk-forward consistente  
-2. um `LiveBroker` com assinatura de ordens  
-3. API key com permissão de **trade** (sem withdraw) e limites bem baixos no início
+`execution.dry_run: true` (default) monta o fill **sem enviar ordem** — mesmo em testnet/live.
+
+```bash
+# 1) Keys de TESTNET em .env (https://testnet.binance.vision) — ≠ keys de produção
+cp config/testnet.example.yaml config/testnet.yaml
+# edite .env: BINANCE_API_KEY / BINANCE_API_SECRET
+
+# 2) Checa conta sem ordem
+FINANCEIROS_CONFIG=config/testnet.yaml financeiros live-check --mode testnet
+
+# 3) Ciclo ainda em dry_run
+FINANCEIROS_CONFIG=config/testnet.yaml financeiros run-once --confirm-testnet
+
+# 4) Só então: dry_run=false no YAML e rode de novo
+```
+
+Guardrails já ligados: teto `max_order_notional_usdt`, circuit breaker, confirmações CLI.  
+Em produção use key só com **Spot Trade**, sem withdraw, com IP whitelist.
 
 ## Próximos passos sugeridos
 
-- Acompanhar paper por alguns dias (`dashboard` / `status` / `health` / `report`)
-- Live trading só depois de walk-forward OOS PASS estável + paper consistente
+- Paper + dashboard por alguns dias
+- Testnet com `dry_run=false` e notional baixo
+- Live só depois de testnet estável + OOS/walk-forward aceitável

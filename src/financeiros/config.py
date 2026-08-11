@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ExchangeConfig(BaseModel):
     name: str = "binance"
+    # Mercado público (klines/preço). Separado da API de trading.
     base_url: str = "https://data-api.binance.vision"
     timeout_seconds: float = 15.0
+    # Override opcional da API assinado (senão deriva do mode)
+    trading_base_url: str | None = None
 
 
 class UniverseConfig(BaseModel):
@@ -68,6 +72,10 @@ class MemoryConfig(BaseModel):
 
 class ExecutionConfig(BaseModel):
     fee_bps: float = 10.0
+    # Guardrails para testnet/live
+    dry_run: bool = True  # True = simula fill sem enviar ordem
+    recv_window_ms: int = 5000
+    max_order_notional_usdt: float = 50.0  # teto duro por ordem no início
 
 
 class RuntimeConfig(BaseModel):
@@ -127,7 +135,16 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         raise FileNotFoundError(f"Arquivo de config não encontrado: {config_path}")
     raw: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     config = AppConfig.model_validate(raw)
-    # Env pode forçar o modo (paper/live)
-    if settings.financeiros_env:
-        config.mode = settings.financeiros_env
+    # Só sobrescreve mode se FINANCEIROS_ENV estiver explícito no ambiente
+    env_mode = os.getenv("FINANCEIROS_ENV")
+    if env_mode:
+        config.mode = env_mode.strip().lower()
+    if config.mode not in {"paper", "testnet", "live"}:
+        raise ValueError(
+            f"mode inválido '{config.mode}'. Use paper | testnet | live."
+        )
     return config
+
+
+def get_settings() -> Settings:
+    return Settings()

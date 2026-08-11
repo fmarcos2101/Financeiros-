@@ -1,0 +1,82 @@
+# Exemplo para paper→testnet. Copie e ajuste:
+#   cp config/testnet.example.yaml config/testnet.yaml
+# Keys de TESTNET são separadas das de produção:
+#   https://testnet.binance.vision
+#
+# Depois:
+#   FINANCEIROS_CONFIG=config/testnet.yaml financeiros live-check --mode testnet
+#   FINANCEIROS_CONFIG=config/testnet.yaml financeiros run-once --confirm-testnet
+
+mode: testnet
+
+exchange:
+  name: binance
+  base_url: https://data-api.binance.vision
+  timeout_seconds: 15
+
+universe:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: 1h
+  lookback_candles: 120
+
+analysis:
+  fast_sma: 12
+  slow_sma: 26
+  min_signal_strength: 0.001
+  max_volatility: 0.08
+  require_trend_filter: true
+  require_slow_slope: false
+  slope_lookback: 5
+  require_momentum: false
+  rsi_period: 14
+  rsi_buy_min: 45
+  rsi_buy_max: 68
+  rsi_sell_max: 55
+  require_volume: true
+  volume_ma_period: 20
+  volume_factor: 1.5
+
+exits:
+  enabled: true
+  stop_loss_pct: 0.04
+  take_profit_pct: 0.06
+  trailing_enabled: true
+  trailing_pct: 0.03
+  trailing_activation_pct: 0.025
+
+capital:
+  starting_cash_usdt: 1000.0
+  risk_per_trade: 0.01
+  max_position_pct: 0.20
+  max_open_positions: 2
+  min_notional_usdt: 10.0
+  reserve_enabled: true
+  reserve_skim_pct: 0.20
+
+memory:
+  db_path: data/memory/financeiros-testnet.db
+
+execution:
+  fee_bps: 10
+  dry_run: true          # mude para false só depois do live-check OK
+  max_order_notional_usdt: 25
+  recv_window_ms: 5000
+
+runtime:
+  cycle_interval_seconds: 3600
+  log_dir: data/logs
+  report_dir: data/logs/reports
+  emit_daily_report_in_loop: true
+  heartbeat_stale_seconds: 7200
+  dashboard_host: 127.0.0.1
+  dashboard_port: 8788
+
+circuit_breaker:
+  enabled: true
+  max_daily_loss_pct: 0.03
+  max_weekly_loss_pct: 0.07
+  block_new_entries: true
+  allow_exits: true
+  auto_resume_next_day: true

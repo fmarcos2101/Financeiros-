@@ -135,12 +135,19 @@ class TradingPipeline:
         return snap
 
     def run_once(self) -> CycleResult:
-        if self.config.mode != "paper":
+        if self.config.mode not in {"paper", "testnet", "live"}:
             raise RuntimeError(
-                f"Modo '{self.config.mode}' ainda não suportado. Use paper."
+                f"Modo '{self.config.mode}' inválido. Use paper | testnet | live."
             )
+        if self.config.mode in {"testnet", "live"} and self.config.execution.dry_run is False:
+            # Fail-closed se alguém ligou dry_run=false sem broker live de verdade
+            if getattr(self.broker, "mode", None) not in {"testnet", "live"}:
+                raise RuntimeError(
+                    "Modo testnet/live com dry_run=false exige LiveBroker."
+                )
 
         started_at = utc_now()
+        mode_tag = self.config.mode
         prices: dict[str, float] = {}
         candles_by_symbol: dict[str, list] = {}
         decisions: list[Decision] = []
@@ -181,6 +188,7 @@ class TradingPipeline:
                 self.memory.save_portfolio(self.portfolio)
                 if advice is not None:
                     decision = self._decision_from_exit(advice)
+                    decision.tags = [mode_tag, "exit", advice.reason, "sell"]
                     skim_total += self._apply_approved_trade(decision, skim_pct)
                     if advice.reason in {"stop_loss", "trailing_stop"}:
                         self.memory.add_lesson(
@@ -224,11 +232,14 @@ class TradingPipeline:
                 price=signal.price,
                 quantity=qty if assessment.approved else 0.0,
                 notional=notional if assessment.approved else 0.0,
-                tags=["paper", signal.side.value],
+                tags=[mode_tag, signal.side.value],
                 metadata={
                     "volatility": signal.volatility,
                     "risk_reasons": assessment.reasons,
                     "signal_meta": signal.metadata,
+                    "dry_run": bool(self.config.execution.dry_run)
+                    if mode_tag in {"testnet", "live"}
+                    else False,
                 },
             )
 

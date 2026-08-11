@@ -67,10 +67,19 @@ def build_snapshot(config: AppConfig) -> dict:
     return {
         "checked_at": utc_now().isoformat(),
         "mode": config.mode,
-        "live_ready": False,
+        "live_ready": config.mode in {"testnet", "live"},
+        "dry_run": bool(config.execution.dry_run),
         "live_note": (
-            "Paper only: ordens reais na Binance ainda não estão implementadas. "
-            "API keys no .env ficam reservadas para uma fase live futura."
+            "Modo paper: sem ordens na exchange."
+            if config.mode == "paper"
+            else (
+                f"Modo {config.mode}: LiveBroker ativo; "
+                + (
+                    "dry_run=true (nenhuma ordem enviada)."
+                    if config.execution.dry_run
+                    else "dry_run=false (ordens reais habilitadas)."
+                )
+            )
         ),
         "universe": {
             "symbols": list(config.universe.symbols),
