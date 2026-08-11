@@ -24,7 +24,7 @@ universe:
 analysis:
   fast_sma: 12
   slow_sma: 26
-  min_signal_strength: 0.001
+  min_signal_strength: 0.0007
   max_volatility: 0.08
   require_trend_filter: true
   require_slow_slope: false
@@ -36,7 +36,7 @@ analysis:
   rsi_sell_max: 55
   require_volume: true
   volume_ma_period: 20
-  volume_factor: 1.5
+  volume_factor: 1.4
 
 exits:
   enabled: true

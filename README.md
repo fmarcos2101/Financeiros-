@@ -156,6 +156,9 @@ O `validate` retuna (opcional) só no período de **treino** e mede o resultado 
 nunca visto — com veredicto PASS/FAIL para reduzir overfitting.  
 Com `--walk-forward`, roda vários splits deslocados e exige maioria dos folds PASS.
 
+Defaults atuais de entrada (`volume_factor: 1.4`, `min_signal_strength: 0.0007`)  
+foram calibrados para ter trades no holdout (o `1.5` antigo zerava o OOS).
+
 ## Testes
 
 ```bash

@@ -27,9 +27,9 @@ class UniverseConfig(BaseModel):
 class AnalysisConfig(BaseModel):
     fast_sma: int = 12
     slow_sma: int = 26
-    min_signal_strength: float = 0.001  # spread mínimo |fast-slow|/preço (~0.1%)
+    min_signal_strength: float = 0.0007  # spread mínimo |fast-slow|/preço (~0.07%)
     max_volatility: float = 0.08
-    # Filtros de qualidade de entrada (defaults calibrados por backtest)
+    # Filtros de qualidade de entrada (calibrados p/ OOS/walk-forward)
     require_trend_filter: bool = True  # BUY só com preço > SMA lenta
     require_slow_slope: bool = False
     slope_lookback: int = 5
@@ -40,7 +40,7 @@ class AnalysisConfig(BaseModel):
     rsi_sell_max: float = 55.0
     require_volume: bool = True
     volume_ma_period: int = 20
-    volume_factor: float = 1.5
+    volume_factor: float = 1.4
 
 
 class ExitsConfig(BaseModel):

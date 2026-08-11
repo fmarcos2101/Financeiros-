@@ -17,10 +17,10 @@ universe:
 analysis:
   fast_sma: 12
   slow_sma: 26
-  min_signal_strength: 0.001  # spread mínimo |SMA_fast-SMA_slow|/preço (~0.1%)
+  min_signal_strength: 0.0007  # spread mínimo |SMA_fast-SMA_slow|/preço (~0.07%)
   max_volatility: 0.08  # desvio-padrão relativo das retornos recentes
-  # Qualidade de entrada (calibrado via backtest 60/90/120d):
-  # tendência + volume acima da média foi o melhor equilíbrio retorno/drawdown
+  # Qualidade de entrada (recalibrado p/ OOS/walk-forward com trades no holdout):
+  # tendência + volume 1.4x — evita overfit do 1.5x (0 trades OOS)
   require_trend_filter: true
   require_slow_slope: false
   slope_lookback: 5
@@ -31,7 +31,7 @@ analysis:
   rsi_sell_max: 55
   require_volume: true
   volume_ma_period: 20
-  volume_factor: 1.5
+  volume_factor: 1.4
 
 exits:
   enabled: true
