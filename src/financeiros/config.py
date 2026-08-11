@@ -25,6 +25,18 @@ class AnalysisConfig(BaseModel):
     slow_sma: int = 26
     min_signal_strength: float = 0.001  # spread mínimo |fast-slow|/preço (~0.1%)
     max_volatility: float = 0.08
+    # Filtros de qualidade de entrada (defaults calibrados por backtest)
+    require_trend_filter: bool = True  # BUY só com preço > SMA lenta
+    require_slow_slope: bool = False
+    slope_lookback: int = 5
+    require_momentum: bool = False
+    rsi_period: int = 14
+    rsi_buy_min: float = 45.0
+    rsi_buy_max: float = 68.0
+    rsi_sell_max: float = 55.0
+    require_volume: bool = True
+    volume_ma_period: int = 20
+    volume_factor: float = 1.5
 
 
 class ExitsConfig(BaseModel):

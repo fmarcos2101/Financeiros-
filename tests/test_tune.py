@@ -37,6 +37,10 @@ def test_tuner_ranks_candidates_on_synthetic_history():
     config.universe.symbols = ["BTCUSDT"]
     config.analysis.min_signal_strength = 0.0001
     config.analysis.max_volatility = 1.0
+    config.analysis.require_trend_filter = False
+    config.analysis.require_slow_slope = False
+    config.analysis.require_momentum = False
+    config.analysis.require_volume = False
     config.capital.risk_per_trade = 0.2
     config.capital.max_position_pct = 0.5
     config.capital.min_notional_usdt = 1.0

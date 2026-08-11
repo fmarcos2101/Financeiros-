@@ -46,6 +46,10 @@ def test_backtest_runs_on_synthetic_data():
     config = AppConfig()
     config.universe.symbols = ["BTCUSDT"]
     config.analysis.min_signal_strength = 0.001
+    config.analysis.require_trend_filter = False
+    config.analysis.require_slow_slope = False
+    config.analysis.require_momentum = False
+    config.analysis.require_volume = False
     config.exits.enabled = True
     config.exits.stop_loss_pct = 0.03
     config.exits.take_profit_pct = 0.20
@@ -77,6 +81,10 @@ def test_backtest_metrics_with_forced_roundtrip():
     config.analysis.slow_sma = 5
     config.analysis.min_signal_strength = 0.0001
     config.analysis.max_volatility = 1.0
+    config.analysis.require_trend_filter = False
+    config.analysis.require_slow_slope = False
+    config.analysis.require_momentum = False
+    config.analysis.require_volume = False
     config.capital.risk_per_trade = 0.5
     config.capital.max_position_pct = 0.8
     config.capital.min_notional_usdt = 1.0

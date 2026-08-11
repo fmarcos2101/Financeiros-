@@ -9,8 +9,8 @@ Robô pessoal de análise de mercado cripto, gestão de risco, memória de decis
 Construir por partes:
 
 1. **Dados** — candles/preço via API pública Binance (`data-api.binance.vision`)
-2. **Análise** — sinal (SMA cross) + filtros de risco
-3. **Saídas** — stop-loss / take-profit automáticos (prioridade sobre entrada)
+2. **Análise** — SMA cross + filtros de entrada (tendência/RSI/volume configuráveis) + risco
+3. **Saídas** — stop-loss / trailing / take-profit (prioridade sobre entrada)
 4. **Capital** — position sizing, portfólio persistido e **fundo reserva**
 5. **Memória** — SQLite com decisões, fills, lições e ciclos
 6. **Execução** — paper broker (live fica para depois)

@@ -18,6 +18,19 @@ analysis:
   slow_sma: 26
   min_signal_strength: 0.001  # spread mínimo |SMA_fast-SMA_slow|/preço (~0.1%)
   max_volatility: 0.08  # desvio-padrão relativo das retornos recentes
+  # Qualidade de entrada (calibrado via backtest 60/90/120d):
+  # tendência + volume acima da média foi o melhor equilíbrio retorno/drawdown
+  require_trend_filter: true
+  require_slow_slope: false
+  slope_lookback: 5
+  require_momentum: false
+  rsi_period: 14
+  rsi_buy_min: 45
+  rsi_buy_max: 68
+  rsi_sell_max: 55
+  require_volume: true
+  volume_ma_period: 20
+  volume_factor: 1.5
 
 exits:
   enabled: true
