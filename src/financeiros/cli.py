@@ -19,6 +19,7 @@ from financeiros.data.providers.binance_trading import (
     TESTNET_TRADING_URL,
     BinanceTradingClient,
 )
+from financeiros.capital.sync import sync_portfolio_from_exchange
 from financeiros.execution.live import LiveBroker
 from financeiros.execution.paper import PaperBroker
 from financeiros.logging_setup import setup_logging
@@ -38,23 +39,30 @@ def _trading_base_url(config) -> str:
     return TESTNET_TRADING_URL
 
 
+def build_trading_client(config) -> BinanceTradingClient:
+    settings = get_settings()
+    if not settings.binance_api_key or not settings.binance_api_secret:
+        raise RuntimeError(
+            "BINANCE_API_KEY e BINANCE_API_SECRET são obrigatórios no .env"
+        )
+    return BinanceTradingClient(
+        settings.binance_api_key,
+        settings.binance_api_secret,
+        base_url=_trading_base_url(config),
+        timeout_seconds=config.exchange.timeout_seconds,
+        recv_window_ms=config.execution.recv_window_ms,
+    )
+
+
 def build_broker(config):
     if config.mode == "paper":
         return PaperBroker(config.execution)
     if config.mode in {"testnet", "live"}:
-        settings = get_settings()
-        if not settings.binance_api_key or not settings.binance_api_secret:
-            raise RuntimeError(
-                "Modo testnet/live exige BINANCE_API_KEY e BINANCE_API_SECRET no .env"
-            )
-        trading = BinanceTradingClient(
-            settings.binance_api_key,
-            settings.binance_api_secret,
-            base_url=_trading_base_url(config),
-            timeout_seconds=config.exchange.timeout_seconds,
-            recv_window_ms=config.execution.recv_window_ms,
+        return LiveBroker(
+            config.execution,
+            build_trading_client(config),
+            mode=config.mode,
         )
-        return LiveBroker(config.execution, trading, mode=config.mode)
     raise RuntimeError(f"Modo não suportado: {config.mode}")
 
 
@@ -76,6 +84,33 @@ def build_pipeline(config_path: str | None = None) -> TradingPipeline:
         memory=memory,
         broker=build_broker(config),
     )
+
+
+def maybe_sync_balances(pipeline: TradingPipeline, logger) -> dict | None:
+    """Sync exchange→local em testnet/live quando configurado."""
+    config = pipeline.config
+    if config.mode == "paper" or not config.execution.sync_balances_on_start:
+        return None
+    broker = pipeline.broker
+    if not isinstance(broker, LiveBroker):
+        raise RuntimeError("sync_balances_on_start exige LiveBroker")
+    market_client = pipeline.market.client
+    report = sync_portfolio_from_exchange(
+        pipeline.portfolio,
+        broker.client,
+        market_client,
+        list(config.universe.symbols),
+        keep_reserve=True,
+    )
+    pipeline.memory.save_portfolio(pipeline.portfolio)
+    logger.info(
+        "Sync balances: cash %.4f→%.4f | positions=%s | ignored=%s",
+        report["before"]["cash_usdt"],
+        report["after"]["cash_usdt"],
+        list(report["after"]["positions"].keys()),
+        list(report["ignored_balances"].keys()),
+    )
+    return report
 
 
 def _ensure_live_cli_allowed(config, args: argparse.Namespace) -> None:
@@ -129,6 +164,7 @@ def cmd_run_once(args: argparse.Namespace) -> int:
         config.execution.max_order_notional_usdt,
     )
     pipeline = build_pipeline(args.config)
+    maybe_sync_balances(pipeline, logger)
     try:
         result = pipeline.run_once()
     except Exception as exc:
@@ -170,6 +206,7 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
     max_cycles = args.max_cycles
     pipeline = build_pipeline(args.config)
     reporter = DailyReporter(config, memory=pipeline.memory)
+    maybe_sync_balances(pipeline, logger)
 
     logger.info(
         "Iniciando run-loop interval=%ss max_cycles=%s mode=%s dry_run=%s",
@@ -184,6 +221,8 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
         while True:
             cycle_n += 1
             try:
+                if config.execution.sync_balances_on_start and cycle_n > 1:
+                    maybe_sync_balances(pipeline, logger)
                 if config.runtime.emit_daily_report_in_loop:
                     emitted = reporter.maybe_emit_for_new_day()
                     if emitted is not None:
@@ -453,6 +492,47 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync_balances(args: argparse.Namespace) -> int:
+    """Alinha ledger local com saldo free da exchange (testnet/live)."""
+    config = load_config(args.config)
+    if args.mode:
+        config.mode = args.mode
+    if config.mode == "paper":
+        print(
+            "sync-balances exige mode testnet|live "
+            "(use --mode testnet ou config testnet).",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.yes:
+        print("Confirme com --yes para sobrescrever caixa/posições locais.", file=sys.stderr)
+        return 2
+
+    logger = setup_logging(config.runtime.log_dir)
+    memory = MemoryStore(config.memory.db_path)
+    portfolio = memory.load_portfolio(config.capital.starting_cash_usdt)
+    trading = build_trading_client(config)
+    market = BinancePublicClient(
+        base_url=config.exchange.base_url,
+        timeout_seconds=config.exchange.timeout_seconds,
+    )
+    report = sync_portfolio_from_exchange(
+        portfolio,
+        trading,
+        market,
+        list(config.universe.symbols),
+        keep_reserve=not args.reset_reserve,
+    )
+    memory.save_portfolio(portfolio)
+    logger.info(
+        "sync-balances ok cash=%.4f positions=%s",
+        portfolio.cash_usdt,
+        list(portfolio.positions.keys()),
+    )
+    print(json.dumps({"ok": True, **report}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_live_check(args: argparse.Namespace) -> int:
     """Valida keys/conectividade sem colocar ordem."""
     config = load_config(args.config)
@@ -460,27 +540,11 @@ def cmd_live_check(args: argparse.Namespace) -> int:
         config.mode = args.mode
     if config.mode == "paper":
         config.mode = "testnet"
-    settings = get_settings()
-    if not settings.binance_api_key or not settings.binance_api_secret:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": "BINANCE_API_KEY / BINANCE_API_SECRET ausentes no .env",
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
+    try:
+        client = build_trading_client(config)
+    except RuntimeError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
         return 1
-
-    client = BinanceTradingClient(
-        settings.binance_api_key,
-        settings.binance_api_secret,
-        base_url=_trading_base_url(config),
-        timeout_seconds=config.exchange.timeout_seconds,
-        recv_window_ms=config.execution.recv_window_ms,
-    )
     try:
         client.ping()
         acct = client.account()
@@ -733,6 +797,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Força testnet ou live para o check (default: testnet se config=paper)",
     )
     live_check.set_defaults(func=cmd_live_check)
+
+    sync_bal = sub.add_parser(
+        "sync-balances",
+        help="Alinha caixa/posições locais com saldo free da Binance",
+    )
+    sync_bal.add_argument("--yes", action="store_true", help="Confirma o sync")
+    sync_bal.add_argument(
+        "--mode",
+        choices=["testnet", "live"],
+        default=None,
+        help="Força testnet ou live",
+    )
+    sync_bal.add_argument(
+        "--reset-reserve",
+        action="store_true",
+        help="Zera também o fundo reserva local",
+    )
+    sync_bal.set_defaults(func=cmd_sync_balances)
 
     status = sub.add_parser("status", help="Mostra caixa, reserva, posições e último ciclo")
     status.set_defaults(func=cmd_status)

@@ -63,6 +63,7 @@ execution:
   dry_run: true          # mude para false só depois do live-check OK
   max_order_notional_usdt: 25
   recv_window_ms: 5000
+  sync_balances_on_start: true
 
 runtime:
   cycle_interval_seconds: 3600

@@ -76,6 +76,8 @@ class ExecutionConfig(BaseModel):
     dry_run: bool = True  # True = simula fill sem enviar ordem
     recv_window_ms: int = 5000
     max_order_notional_usdt: float = 50.0  # teto duro por ordem no início
+    # Alinha ledger local com saldo free da exchange ao iniciar ciclo
+    sync_balances_on_start: bool = True
 
 
 class RuntimeConfig(BaseModel):

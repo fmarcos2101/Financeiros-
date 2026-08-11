@@ -61,6 +61,7 @@ execution:
   dry_run: true  # em testnet/live: true = não envia ordem de verdade
   max_order_notional_usdt: 50  # teto duro por ordem (comece baixo)
   recv_window_ms: 5000
+  sync_balances_on_start: true  # testnet/live: alinha caixa/posições com a exchange
 
 runtime:
   cycle_interval_seconds: 3600  # 1h entre ciclos no run-loop

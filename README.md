@@ -210,14 +210,17 @@ cp config/testnet.example.yaml config/testnet.yaml
 # 2) Checa conta sem ordem
 FINANCEIROS_CONFIG=config/testnet.yaml financeiros live-check --mode testnet
 
-# 3) Ciclo ainda em dry_run
+# 3) Alinha ledger local com saldo da exchange
+FINANCEIROS_CONFIG=config/testnet.yaml financeiros sync-balances --mode testnet --yes
+
+# 4) Ciclo ainda em dry_run (também synca no start se configurado)
 FINANCEIROS_CONFIG=config/testnet.yaml financeiros run-once --confirm-testnet
 
-# 4) Só então: dry_run=false no YAML e rode de novo
+# 5) Só então: dry_run=false no YAML e rode de novo
 ```
 
-Guardrails já ligados: teto `max_order_notional_usdt`, circuit breaker, confirmações CLI.  
-Em produção use key só com **Spot Trade**, sem withdraw, com IP whitelist.
+Guardrails: `dry_run`, teto `max_order_notional_usdt`, `sync_balances_on_start`,  
+circuit breaker, confirmações CLI. Em produção: key só **Spot Trade**, sem withdraw.
 
 ## Próximos passos sugeridos
 
