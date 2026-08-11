@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Financeiros — Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #e8efe9;
+      --bg1: #d5e4dc;
+      --ink: #132019;
+      --muted: #4d6358;
+      --line: rgba(19, 32, 25, 0.12);
+      --panel: rgba(255, 252, 247, 0.72);
+      --ok: #1f7a4c;
+      --warn: #9a6b12;
+      --bad: #a33b2d;
+      --accent: #0f6b5c;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+      --sans: "Manrope", system-ui, sans-serif;
+      --display: "Fraunces", Georgia, serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(900px 420px at 8% -10%, #f4fff8 0%, transparent 55%),
+        radial-gradient(700px 380px at 100% 0%, #cfe3d8 0%, transparent 50%),
+        linear-gradient(165deg, var(--bg0), var(--bg1));
+      line-height: 1.45;
+    }
+
+    .wrap {
+      width: min(1100px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 1.75rem 0 3rem;
+    }
+
+    header.hero {
+      display: grid;
+      gap: 0.55rem;
+      margin-bottom: 1.5rem;
+      animation: rise 0.55s ease-out both;
+    }
+
+    .brand {
+      font-family: var(--display);
+      font-size: clamp(2.1rem, 5vw, 3.2rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin: 0;
+      color: var(--ink);
+    }
+
+    .tagline {
+      margin: 0;
+      max-width: 36rem;
+      color: var(--muted);
+      font-size: 1.02rem;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem 1rem;
+      align-items: center;
+      margin-top: 0.35rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.2rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .dot {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(31, 122, 76, 0.15); }
+    .dot.warn { background: var(--warn); }
+    .dot.bad { background: var(--bad); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.9rem;
+      margin-bottom: 1.1rem;
+    }
+
+    .metric {
+      padding: 0.95rem 0.2rem 0.7rem;
+      border-top: 1px solid var(--line);
+      animation: rise 0.6s ease-out both;
+    }
+    .metric:nth-child(1) { animation-delay: 0.05s; }
+    .metric:nth-child(2) { animation-delay: 0.1s; }
+    .metric:nth-child(3) { animation-delay: 0.15s; }
+    .metric:nth-child(4) { animation-delay: 0.2s; }
+
+    .metric .label {
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .metric .value {
+      font-family: var(--mono);
+      font-size: clamp(1.25rem, 2.5vw, 1.65rem);
+      font-weight: 500;
+    }
+    .metric .sub {
+      margin-top: 0.2rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+    .pos { color: var(--ok); }
+    .neg { color: var(--bad); }
+
+    section.block {
+      margin-top: 1.5rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--line);
+      animation: rise 0.65s ease-out both;
+    }
+
+    section.block h2 {
+      margin: 0 0 0.35rem;
+      font-family: var(--display);
+      font-size: 1.35rem;
+      font-weight: 500;
+    }
+    section.block p.help {
+      margin: 0 0 0.85rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .note {
+      padding: 0.85rem 0;
+      border-top: 1px dashed var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+      max-width: 46rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.35rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      font-size: 0.7rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    td.mono, th.mono { font-family: var(--mono); }
+    .empty { color: var(--muted); font-size: 0.9rem; padding: 0.4rem 0; }
+
+    .health-msg {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 0.6rem;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    @media (max-width: 820px) {
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 480px) {
+      .grid { grid-template-columns: 1fr; }
+      .wrap { width: min(1100px, calc(100% - 1.25rem)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1 class="brand">Financeiros</h1>
+      <p class="tagline">Monitor do robô em paper trading — wealth, saúde do loop e últimas decisões.</p>
+      <div class="meta-row">
+        <span class="pill"><span id="health-dot" class="dot"></span><span id="health-label">carregando…</span></span>
+        <span class="pill" id="mode-label">mode —</span>
+        <span class="pill" id="symbols-label">symbols —</span>
+        <span class="pill" id="updated-label">atualizado —</span>
+      </div>
+    </header>
+
+    <div class="grid" id="metrics">
+      <div class="metric">
+        <div class="label">Wealth</div>
+        <div class="value" id="m-wealth">—</div>
+        <div class="sub" id="m-return">retorno —</div>
+      </div>
+      <div class="metric">
+        <div class="label">Cash</div>
+        <div class="value" id="m-cash">—</div>
+        <div class="sub" id="m-equity">equity —</div>
+      </div>
+      <div class="metric">
+        <div class="label">Reserva</div>
+        <div class="value" id="m-reserve">—</div>
+        <div class="sub" id="m-skim">skim total —</div>
+      </div>
+      <div class="metric">
+        <div class="label">Circuit</div>
+        <div class="value" id="m-circuit">—</div>
+        <div class="sub" id="m-positions">posições —</div>
+      </div>
+    </div>
+
+    <p class="health-msg" id="health-msg"></p>
+    <p class="note" id="live-note"></p>
+
+    <section class="block">
+      <h2>Posições</h2>
+      <p class="help">Mark-to-market com preço público da Binance.</p>
+      <div id="positions"></div>
+    </section>
+
+    <section class="block">
+      <h2>Ciclos recentes</h2>
+      <p class="help">Últimas execuções do pipeline.</p>
+      <div id="cycles"></div>
+    </section>
+
+    <section class="block">
+      <h2>Decisões</h2>
+      <p class="help">Sinais aprovados ou rejeitados pelo risco/filtros.</p>
+      <div id="decisions"></div>
+    </section>
+  </div>
+
+  <script>
+    const fmt = (n, d = 2) =>
+      n == null || Number.isNaN(Number(n))
+        ? "—"
+        : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
+
+    const money = (n) => (n == null ? "—" : `${fmt(n, 2)} USDT`);
+
+    function setHealth(h) {
+      const dot = document.getElementById("health-dot");
+      const label = document.getElementById("health-label");
+      const msg = document.getElementById("health-msg");
+      dot.className = "dot";
+      if (!h || !h.alive) {
+        dot.classList.add("bad");
+        label.textContent = h?.reason || "offline";
+      } else if (h.reason === "circuit_halted" || h.reason === "last_cycle_error") {
+        dot.classList.add("warn");
+        label.textContent = h.reason;
+      } else {
+        dot.classList.add("ok");
+        label.textContent = "loop ok";
+      }
+      const age = h?.age_seconds != null ? ` · age ${fmt(h.age_seconds, 0)}s` : "";
+      msg.textContent = (h?.message || "") + age;
+    }
+
+    function renderPositions(rows) {
+      const el = document.getElementById("positions");
+      if (!rows || !rows.length) {
+        el.innerHTML = '<p class="empty">Nenhuma posição aberta.</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th class="mono">Qty</th>
+              <th class="mono">Avg</th>
+              <th class="mono">Mark</th>
+              <th class="mono">Value</th>
+              <th class="mono">PnL%</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((p) => `
+              <tr>
+                <td>${p.symbol}</td>
+                <td class="mono">${fmt(p.quantity, 6)}</td>
+                <td class="mono">${fmt(p.avg_price, 2)}</td>
+                <td class="mono">${p.mark_price != null ? fmt(p.mark_price, 2) : "—"}</td>
+                <td class="mono">${p.market_value != null ? fmt(p.market_value, 2) : "—"}</td>
+                <td class="mono ${p.unrealized_pnl_pct >= 0 ? "pos" : "neg"}">
+                  ${p.unrealized_pnl_pct != null ? fmt(p.unrealized_pnl_pct, 2) + "%" : "—"}
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+    }
+
+    function renderCycles(rows) {
+      const el = document.getElementById("cycles");
+      if (!rows || !rows.length) {
+        el.innerHTML = '<p class="empty">Sem ciclos ainda.</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th class="mono">ID</th>
+              <th>Finished</th>
+              <th class="mono">Cash</th>
+              <th class="mono">Equity</th>
+              <th class="mono">Decisions</th>
+              <th class="mono">Approved</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((c) => `
+              <tr>
+                <td class="mono">${c.id}</td>
+                <td class="mono">${(c.finished_at || "—").replace("T", " ").slice(0, 19)}</td>
+                <td class="mono">${fmt(c.cash_usdt, 2)}</td>
+                <td class="mono">${fmt(c.equity_usdt, 2)}</td>
+                <td class="mono">${c.decisions_count ?? "—"}</td>
+                <td class="mono">${c.approved_count ?? "—"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+    }
+
+    function renderDecisions(rows) {
+      const el = document.getElementById("decisions");
+      if (!rows || !rows.length) {
+        el.innerHTML = '<p class="empty">Sem decisões registradas.</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>OK?</th>
+              <th class="mono">Price</th>
+              <th>Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((d) => `
+              <tr>
+                <td class="mono">${(d.created_at || "—").replace("T", " ").slice(0, 19)}</td>
+                <td>${d.symbol}</td>
+                <td>${d.side}</td>
+                <td class="${d.approved ? "pos" : "neg"}">${d.approved ? "yes" : "no"}</td>
+                <td class="mono">${fmt(d.price, 2)}</td>
+                <td>${d.rationale || "—"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/snapshot", { cache: "no-store" });
+        if (!res.ok) throw new Error("snapshot HTTP " + res.status);
+        const data = await res.json();
+        const p = data.portfolio || {};
+        const cb = data.circuit_breaker || {};
+
+        setHealth(data.health);
+        document.getElementById("mode-label").textContent = `mode ${data.mode || "—"}`;
+        document.getElementById("symbols-label").textContent =
+          (data.universe?.symbols || []).join(" · ") || "symbols —";
+        document.getElementById("updated-label").textContent =
+          "atualizado " + (data.checked_at || "—").replace("T", " ").slice(0, 19) + " UTC";
+
+        document.getElementById("m-wealth").textContent = money(p.total_wealth_usdt);
+        const ret = document.getElementById("m-return");
+        ret.textContent = `retorno ${fmt(p.total_return_pct, 2)}%`;
+        ret.className = "sub " + ((p.total_return_pct || 0) >= 0 ? "pos" : "neg");
+
+        document.getElementById("m-cash").textContent = money(p.cash_usdt);
+        document.getElementById("m-equity").textContent = `equity ${fmt(p.equity_usdt, 2)}`;
+        document.getElementById("m-reserve").textContent = money(p.reserve_usdt);
+        document.getElementById("m-skim").textContent = `skim total ${fmt(p.reserve_skimmed_total, 2)}`;
+        document.getElementById("m-circuit").textContent = cb.halted ? "HALTED" : "OPEN";
+        document.getElementById("m-circuit").className = "value " + (cb.halted ? "neg" : "pos");
+        document.getElementById("m-positions").textContent =
+          `${data.counts?.open_positions ?? 0} abertas · ${data.counts?.fills ?? 0} fills`;
+
+        document.getElementById("live-note").textContent = data.live_note || "";
+        renderPositions(p.positions || []);
+        renderCycles(data.cycles || []);
+        renderDecisions(data.decisions || []);
+      } catch (err) {
+        document.getElementById("health-label").textContent = "erro";
+        document.getElementById("health-dot").className = "dot bad";
+        document.getElementById("health-msg").textContent = String(err);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 15000);
+  </script>
+</body>
+</html>

@@ -17,6 +17,7 @@ from financeiros.data.providers.binance import BinancePublicClient
 from financeiros.execution.paper import PaperBroker
 from financeiros.logging_setup import setup_logging
 from financeiros.memory.store import MemoryStore
+from financeiros.dashboard import run_dashboard
 from financeiros.health import read_health, write_heartbeat
 from financeiros.pipeline import TradingPipeline
 from financeiros.report import DailyReporter
@@ -374,6 +375,16 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    host = args.host or config.runtime.dashboard_host
+    port = args.port or config.runtime.dashboard_port
+    logger = setup_logging(config.runtime.log_dir)
+    logger.info("Dashboard em http://%s:%s (Ctrl+C para sair)", host, port)
+    run_dashboard(config, host=host, port=port)
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     logger = setup_logging(config.runtime.log_dir)
@@ -567,6 +578,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Checa heartbeat do run-loop (vivo / stale / erro)",
     )
     health.set_defaults(func=cmd_health)
+
+    dash = sub.add_parser(
+        "dashboard",
+        help="Sobe dashboard local de monitoramento (somente leitura)",
+    )
+    dash.add_argument("--host", default=None, help="Host bind (default: config)")
+    dash.add_argument("--port", type=int, default=None, help="Porta (default: 8787)")
+    dash.set_defaults(func=cmd_dashboard)
 
     reserve = sub.add_parser("reserve", help="Mostra fundo reserva e transferências")
     reserve.add_argument("--limit", type=int, default=20)

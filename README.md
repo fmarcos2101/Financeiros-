@@ -20,6 +20,7 @@ Construir por partes:
 10. **Relatório diário** — resumo + alertas (também no `run-loop`)
 11. **Validação OOS** — holdout simples ou walk-forward
 12. **Health** — `financeiros health` checa se o loop ainda está vivo
+13. **Dashboard** — monitor local (wealth, posições, ciclos, decisões)
 
 ### Saídas automáticas
 
@@ -178,13 +179,30 @@ financeiros status
 financeiros health
 financeiros report --text
 financeiros memory --limit 20
+
+# dashboard local (somente leitura)
+financeiros dashboard
+# http://127.0.0.1:8787
+./scripts/start-dashboard.sh
 ```
 
 O `run-loop` / `run-once` gravam `data/logs/heartbeat.json`.  
 `financeiros health` falha (exit 1) se o heartbeat estiver ausente ou mais antigo que  
 `runtime.heartbeat_stale_seconds` (default 2h).
 
+## Binance / live trading
+
+**Hoje o robô não opera na sua conta Binance.**  
+Ele só lê preços públicos e simula fills em paper no SQLite local.
+
+As variáveis `BINANCE_API_KEY` / `BINANCE_API_SECRET` no `.env` estão reservadas  
+para uma fase futura. Live exigiria:
+
+1. paper estável + validação OOS/walk-forward consistente  
+2. um `LiveBroker` com assinatura de ordens  
+3. API key com permissão de **trade** (sem withdraw) e limites bem baixos no início
+
 ## Próximos passos sugeridos
 
-- Acompanhar paper por alguns dias (`status` / `health` / `report`)
+- Acompanhar paper por alguns dias (`dashboard` / `status` / `health` / `report`)
 - Live trading só depois de walk-forward OOS PASS estável + paper consistente
