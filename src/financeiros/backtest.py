@@ -191,6 +191,7 @@ class BacktestEngine:
         interval: str | None = None,
         history: dict[str, list[Candle]] | None = None,
         curve_stride: int = 1,
+        active_after: datetime | None = None,
     ) -> BacktestReport:
         symbols = symbols or list(self.config.universe.symbols)
         interval = interval or self.config.universe.interval
@@ -213,6 +214,7 @@ class BacktestEngine:
         equity_curve: list[dict] = []
         peak_wealth = self.config.capital.starting_cash_usdt
         max_dd = 0.0
+        active_bars = 0
 
         # séries crescentes por símbolo
         series: dict[str, list[Candle]] = {s: [] for s in symbols}
@@ -232,6 +234,11 @@ class BacktestEngine:
             if i < warmup:
                 continue
 
+            # Período inativo: só acumula indicadores (warmup do holdout)
+            if active_after is not None and ts < active_after:
+                continue
+
+            active_bars += 1
             prices = {sym: series[sym][-1].close for sym in symbols if series[sym]}
 
             for sym in symbols:
@@ -339,11 +346,12 @@ class BacktestEngine:
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else None
         avg_pnl = (sum(realized_pnls) / len(realized_pnls)) if realized_pnls else None
 
+        bars = active_bars if active_after is not None else max(0, len(timeline) - warmup)
         return BacktestReport(
             symbols=symbols,
             interval=interval,
             days=days,
-            bars=max(0, len(timeline) - warmup),
+            bars=bars,
             starting_cash_usdt=starting,
             ending_cash_usdt=final.cash_usdt,
             ending_reserve_usdt=final.reserve_usdt,

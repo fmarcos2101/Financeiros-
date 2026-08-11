@@ -19,6 +19,7 @@ from financeiros.logging_setup import setup_logging
 from financeiros.memory.store import MemoryStore
 from financeiros.pipeline import TradingPipeline
 from financeiros.report import DailyReporter
+from financeiros.validate import OutOfSampleValidator
 
 
 def build_pipeline(config_path: str | None = None) -> TradingPipeline:
@@ -331,6 +332,54 @@ def cmd_tune(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    logger = setup_logging(config.runtime.log_dir)
+    symbols = (
+        [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        if args.symbols
+        else list(config.universe.symbols)
+    )
+    interval = args.interval or config.universe.interval
+    validator = OutOfSampleValidator(config)
+    logger.info(
+        "OOS validate train=%sd holdout=%sd tune=%s symbols=%s",
+        args.train_days,
+        args.holdout_days,
+        not args.no_tune,
+        symbols,
+    )
+    result = validator.run(
+        train_days=args.train_days,
+        holdout_days=args.holdout_days,
+        symbols=symbols,
+        interval=interval,
+        tune=not args.no_tune,
+        max_dd_limit=args.max_dd,
+        min_holdout_return_pct=args.min_return,
+        max_holdout_dd_pct=args.max_holdout_dd,
+        min_holdout_trades=args.min_trades,
+        max_return_drop_pct=args.max_drop,
+    )
+    logger.info(
+        "OOS verdict=%s train_ret=%.2f%% holdout_ret=%.2f%% holdout_dd=%.2f%%",
+        result["verdict"],
+        result["train"]["total_return_pct"],
+        result["holdout"]["total_return_pct"],
+        result["holdout"]["max_drawdown_pct"],
+    )
+    if result["fail_reasons"]:
+        for reason in result["fail_reasons"]:
+            logger.warning("OOS fail: %s", reason)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if args.save:
+        out = Path(args.save)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("Validação salva em %s", out)
+    return 0 if result["passed"] else 1
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     logger = setup_logging(config.runtime.log_dir)
@@ -525,6 +574,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="Salva o relatório JSON neste caminho",
     )
     bt.set_defaults(func=cmd_backtest)
+
+    validate = sub.add_parser(
+        "validate",
+        help="Backtest out-of-sample (treino + holdout)",
+    )
+    validate.add_argument("--train-days", type=int, default=60)
+    validate.add_argument("--holdout-days", type=int, default=30)
+    validate.add_argument("--symbols", default=None)
+    validate.add_argument("--interval", default=None)
+    validate.add_argument(
+        "--no-tune",
+        action="store_true",
+        help="Usa parâmetros atuais sem retunar no treino",
+    )
+    validate.add_argument("--max-dd", type=float, default=8.0, help="Limite DD no tune")
+    validate.add_argument(
+        "--min-return",
+        type=float,
+        default=-2.0,
+        help="Retorno mínimo aceitável no holdout (%)",
+    )
+    validate.add_argument(
+        "--max-holdout-dd",
+        type=float,
+        default=6.0,
+        help="Drawdown máximo aceitável no holdout (%)",
+    )
+    validate.add_argument(
+        "--min-trades",
+        type=int,
+        default=2,
+        help="Mínimo de trades no holdout",
+    )
+    validate.add_argument(
+        "--max-drop",
+        type=float,
+        default=5.0,
+        help="Queda máxima train→holdout em pontos percentuais",
+    )
+    validate.add_argument("--save", default=None)
+    validate.set_defaults(func=cmd_validate)
 
     tune = sub.add_parser("tune", help="Busca parâmetros de saída via grid no histórico")
     tune.add_argument("--days", type=int, default=60, help="Janela histórica em dias")

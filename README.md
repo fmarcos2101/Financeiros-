@@ -18,6 +18,7 @@ Construir por partes:
 8. **Backtest** — replay offline no histórico com métricas
 9. **Circuit breaker** — pausa novas compras em perda diária/semanal excessiva
 10. **Relatório diário** — resumo + alertas (também no `run-loop`)
+11. **Validação OOS** — tune no treino e teste em holdout
 
 ### Saídas automáticas
 
@@ -139,15 +140,17 @@ capital:
   reserve_skim_pct: 0.20
 ```
 
-## Backtest e tune
+## Backtest, tune e validação OOS
 
 ```bash
 financeiros backtest --days 60
-financeiros backtest --days 90 --symbols BTCUSDT --trades
 financeiros tune --days 60 --save data/logs/tune-last.json
+financeiros validate --train-days 60 --holdout-days 30
+financeiros validate --train-days 60 --holdout-days 30 --no-tune
 ```
 
-O `tune` testa combinações de stop/TP/trailing no mesmo histórico e ranqueia as melhores.
+O `validate` retuna (opcional) só no período de **treino** e mede o resultado no **holdout**  
+nunca visto — com veredicto PASS/FAIL para reduzir overfitting.
 
 ## Testes
 
@@ -157,5 +160,5 @@ pytest -q
 
 ## Próximos passos sugeridos
 
-- Backtest out-of-sample
-- Live trading só depois de métricas estáveis em paper + backtest/tune
+- Rodar paper (`run-loop`) e acompanhar `report` / `status`
+- Live trading só depois de OOS PASS estável + paper consistente
