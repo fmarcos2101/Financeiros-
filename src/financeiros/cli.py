@@ -11,6 +11,7 @@ from financeiros.analysis.risk import RiskEngine
 from financeiros.analysis.signals import SignalEngine
 from financeiros.backtest import BacktestEngine
 from financeiros.config import load_config
+from financeiros.tune import StrategyTuner
 from financeiros.data.market import MarketDataService
 from financeiros.data.providers.binance import BinancePublicClient
 from financeiros.execution.paper import PaperBroker
@@ -171,15 +172,26 @@ def cmd_status(args: argparse.Namespace) -> int:
         "enabled": config.exits.enabled,
         "stop_loss_pct": config.exits.stop_loss_pct,
         "take_profit_pct": config.exits.take_profit_pct,
+        "trailing_enabled": config.exits.trailing_enabled,
+        "trailing_pct": config.exits.trailing_pct,
+        "trailing_activation_pct": config.exits.trailing_activation_pct,
     }
     if status["positions"] and config.exits.enabled:
         enriched_pos = []
         for pos in status["positions"]:
             avg = float(pos["avg_price"])
+            peak = float(pos.get("peak_price") or avg)
+            trail = None
+            if config.exits.trailing_enabled and peak > 0:
+                gain = (peak - avg) / avg if avg else 0.0
+                if gain >= config.exits.trailing_activation_pct:
+                    trail = round(peak * (1 - config.exits.trailing_pct), 8)
             enriched_pos.append(
                 {
                     **pos,
+                    "peak_price": peak,
                     "stop_loss": round(avg * (1 - config.exits.stop_loss_pct), 8),
+                    "trailing_stop": trail,
                     "take_profit": round(avg * (1 + config.exits.take_profit_pct), 8),
                 }
             )
@@ -214,6 +226,46 @@ def cmd_cycles(args: argparse.Namespace) -> int:
     memory = MemoryStore(config.memory.db_path)
     rows = memory.recent_cycles(limit=args.limit)
     print(json.dumps(rows, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    logger = setup_logging(config.runtime.log_dir)
+    symbols = (
+        [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        if args.symbols
+        else list(config.universe.symbols)
+    )
+    interval = args.interval or config.universe.interval
+    tuner = StrategyTuner(config)
+    logger.info(
+        "Tune start symbols=%s interval=%s days=%s",
+        symbols,
+        interval,
+        args.days,
+    )
+    result = tuner.run(
+        days=args.days,
+        symbols=symbols,
+        interval=interval,
+        max_dd_limit=args.max_dd,
+        top_n=args.top,
+    )
+    best = result.get("best") or {}
+    logger.info(
+        "Tune done tested=%s best_return=%s best_dd=%s trailing=%s",
+        result.get("tested"),
+        best.get("total_return_pct"),
+        best.get("max_drawdown_pct"),
+        best.get("trailing_enabled"),
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if args.save:
+        out = Path(args.save)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("Tune salvo em %s", out)
     return 0
 
 
@@ -359,6 +411,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Salva o relatório JSON neste caminho",
     )
     bt.set_defaults(func=cmd_backtest)
+
+    tune = sub.add_parser("tune", help="Busca parâmetros de saída via grid no histórico")
+    tune.add_argument("--days", type=int, default=60, help="Janela histórica em dias")
+    tune.add_argument("--symbols", default=None, help="Lista separada por vírgula")
+    tune.add_argument("--interval", default=None, help="Intervalo dos candles")
+    tune.add_argument(
+        "--max-dd",
+        type=float,
+        default=8.0,
+        help="Penaliza drawdown acima deste %%",
+    )
+    tune.add_argument("--top", type=int, default=5, help="Quantos melhores mostrar")
+    tune.add_argument("--save", default=None, help="Salva resultado JSON")
+    tune.set_defaults(func=cmd_tune)
 
     return parser
 

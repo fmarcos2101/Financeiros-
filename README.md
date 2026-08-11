@@ -21,11 +21,11 @@ Construir por partes:
 
 Com posição aberta, o ciclo checa primeiro:
 
-- **Stop-loss** — se o preço (low/close) cair `stop_loss_pct` abaixo da entrada
-- **Take-profit** — se o preço (high/close) subir `take_profit_pct` acima da entrada
+- **Stop-loss** — se o preço cair `stop_loss_pct` abaixo da entrada
+- **Trailing stop** — após `trailing_activation_pct` de lucro, o stop sobe com o pico
+- **Take-profit** — se o preço subir `take_profit_pct` acima da entrada
 
-Se stop e TP caem no mesmo candle, prevalece o **stop** (cenário conservador).  
-Stop-loss também grava uma lição automática na memória.
+Se stop e TP caem no mesmo candle, prevalece o **stop** (cenário conservador).
 
 ### Fundo reserva
 
@@ -101,25 +101,26 @@ Ajuste em `config/default.yaml`:
 ```yaml
 exits:
   enabled: true
-  stop_loss_pct: 0.03
+  stop_loss_pct: 0.04
   take_profit_pct: 0.06
+  trailing_enabled: true
+  trailing_pct: 0.03
+  trailing_activation_pct: 0.025
 
 capital:
   reserve_enabled: true
   reserve_skim_pct: 0.20
 ```
 
-## Backtest
-
-Replay da mesma lógica (sinal, risco, stop/TP, reserva) no histórico da Binance:
+## Backtest e tune
 
 ```bash
 financeiros backtest --days 60
 financeiros backtest --days 90 --symbols BTCUSDT --trades
-financeiros backtest --days 30 --save data/logs/backtest-last.json
+financeiros tune --days 60 --save data/logs/tune-last.json
 ```
 
-Métricas principais: retorno total, max drawdown, win rate, profit factor, stops/TPs, reserva acumulada.
+O `tune` testa combinações de stop/TP/trailing no mesmo histórico e ranqueia as melhores.
 
 ## Testes
 
@@ -129,6 +130,5 @@ pytest -q
 
 ## Próximos passos sugeridos
 
-- Trailing stop
 - Mais features de mercado (funding, open interest)
-- Live trading só depois de métricas estáveis em paper + backtest
+- Live trading só depois de métricas estáveis em paper + backtest/tune

@@ -61,6 +61,7 @@ class BacktestReport:
     buys: int
     sells: int
     stop_losses: int
+    trailing_stops: int
     take_profits: int
     signal_sells: int
     win_rate: float | None
@@ -89,6 +90,7 @@ class BacktestReport:
             "buys": self.buys,
             "sells": self.sells,
             "stop_losses": self.stop_losses,
+            "trailing_stops": self.trailing_stops,
             "take_profits": self.take_profits,
             "signal_sells": self.signal_sells,
             "win_rate": None if self.win_rate is None else round(self.win_rate, 4),
@@ -215,7 +217,7 @@ class BacktestEngine:
         # séries crescentes por símbolo
         series: dict[str, list[Candle]] = {s: [] for s in symbols}
 
-        buys = sells = stops = takes = signal_sells = 0
+        buys = sells = stops = trails = takes = signal_sells = 0
         realized_pnls: list[float] = []
         reserve_skim_total = 0.0
 
@@ -249,6 +251,8 @@ class BacktestEngine:
                         sells += 1
                         if advice.reason == "stop_loss":
                             stops += 1
+                        elif advice.reason == "trailing_stop":
+                            trails += 1
                         else:
                             takes += 1
                         realized_pnls.append(outcome.realized_pnl)
@@ -351,6 +355,7 @@ class BacktestEngine:
             buys=buys,
             sells=sells,
             stop_losses=stops,
+            trailing_stops=trails,
             take_profits=takes,
             signal_sells=signal_sells,
             win_rate=win_rate,

@@ -21,8 +21,12 @@ analysis:
 
 exits:
   enabled: true
-  stop_loss_pct: 0.03     # sai se cair 3% abaixo do preço médio de entrada
-  take_profit_pct: 0.06   # realiza se subir 6% acima da entrada
+  # Defaults vindos do `financeiros tune --days 60` (melhor score no período)
+  stop_loss_pct: 0.04
+  take_profit_pct: 0.06
+  trailing_enabled: true
+  trailing_pct: 0.03
+  trailing_activation_pct: 0.025
 
 capital:
   starting_cash_usdt: 1000.0

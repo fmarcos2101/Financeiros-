@@ -74,6 +74,7 @@ class MemoryStore:
                     symbol TEXT PRIMARY KEY,
                     quantity REAL NOT NULL,
                     avg_price REAL NOT NULL,
+                    peak_price REAL NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );
 
@@ -102,10 +103,15 @@ class MemoryStore:
             self._migrate(conn)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_cash)").fetchall()}
-        if cols and "reserve_usdt" not in cols:
+        cash_cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_cash)").fetchall()}
+        if cash_cols and "reserve_usdt" not in cash_cols:
             conn.execute(
                 "ALTER TABLE portfolio_cash ADD COLUMN reserve_usdt REAL NOT NULL DEFAULT 0"
+            )
+        pos_cols = {row[1] for row in conn.execute("PRAGMA table_info(positions)").fetchall()}
+        if pos_cols and "peak_price" not in pos_cols:
+            conn.execute(
+                "ALTER TABLE positions ADD COLUMN peak_price REAL NOT NULL DEFAULT 0"
             )
 
     def record_decision(self, decision: Decision) -> int:
@@ -257,13 +263,16 @@ class MemoryStore:
                 reserve_usdt=float(cash_row["reserve_usdt"] or 0.0),
             )
             pos_rows = conn.execute(
-                "SELECT symbol, quantity, avg_price FROM positions WHERE quantity > 0"
+                "SELECT symbol, quantity, avg_price, peak_price FROM positions WHERE quantity > 0"
             ).fetchall()
             for row in pos_rows:
+                avg = float(row["avg_price"])
+                peak = float(row["peak_price"] or 0.0) or avg
                 portfolio.positions[row["symbol"]] = Position(
                     symbol=row["symbol"],
                     quantity=float(row["quantity"]),
-                    avg_price=float(row["avg_price"]),
+                    avg_price=avg,
+                    peak_price=peak,
                 )
             return portfolio
 
@@ -288,10 +297,16 @@ class MemoryStore:
                     continue
                 conn.execute(
                     """
-                    INSERT INTO positions (symbol, quantity, avg_price, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO positions (symbol, quantity, avg_price, peak_price, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (symbol, float(pos.quantity), float(pos.avg_price), now),
+                    (
+                        symbol,
+                        float(pos.quantity),
+                        float(pos.avg_price),
+                        float(pos.peak_price or pos.avg_price),
+                        now,
+                    ),
                 )
 
     def record_reserve_transfer(
@@ -381,7 +396,10 @@ class MemoryStore:
             positions = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT symbol, quantity, avg_price, updated_at FROM positions ORDER BY symbol"
+                    """
+                    SELECT symbol, quantity, avg_price, peak_price, updated_at
+                    FROM positions ORDER BY symbol
+                    """
                 ).fetchall()
             ]
             last_cycle = conn.execute(

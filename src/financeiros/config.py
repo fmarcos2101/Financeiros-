@@ -31,8 +31,12 @@ class ExitsConfig(BaseModel):
     """Saídas automáticas por posição (prioridade sobre sinal de entrada)."""
 
     enabled: bool = True
-    stop_loss_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    stop_loss_pct: float = Field(default=0.04, ge=0.0, le=1.0)
     take_profit_pct: float = Field(default=0.06, ge=0.0, le=5.0)
+    # Trailing: depois de activation_pct de lucro, stop sobe com o pico
+    trailing_enabled: bool = True
+    trailing_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    trailing_activation_pct: float = Field(default=0.025, ge=0.0, le=1.0)
 
 
 class CapitalConfig(BaseModel):

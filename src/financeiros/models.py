@@ -76,6 +76,7 @@ class Position(BaseModel):
     symbol: str
     quantity: float = 0.0
     avg_price: float = 0.0
+    peak_price: float = 0.0  # máximo observado desde a entrada (trailing)
 
     @property
     def notional(self) -> float:

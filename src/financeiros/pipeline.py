@@ -134,17 +134,19 @@ class TradingPipeline:
             position = self.portfolio.positions.get(symbol)
             if position and position.quantity > 0:
                 advice = self.exits.evaluate(position, candles)
+                # Persiste pico atualizado pelo trailing mesmo sem saída
+                self.memory.save_portfolio(self.portfolio)
                 if advice is not None:
                     decision = self._decision_from_exit(advice)
                     skim_total += self._apply_approved_trade(decision, skim_pct)
-                    if advice.reason == "stop_loss":
+                    if advice.reason in {"stop_loss", "trailing_stop"}:
                         self.memory.add_lesson(
                             lesson=(
-                                f"Stop-loss em {symbol}: pnl {advice.pnl_pct:.2%}. "
+                                f"{advice.reason} em {symbol}: pnl {advice.pnl_pct:.2%}. "
                                 "Reavaliar entrada em volatilidade semelhante."
                             ),
                             symbol=symbol,
-                            tags=["auto", "stop_loss"],
+                            tags=["auto", advice.reason],
                         )
                     decision_id = self.memory.record_decision(decision)
                     decision.metadata["decision_id"] = decision_id
@@ -219,20 +221,26 @@ class TradingPipeline:
             total_wealth_usdt=final.total_wealth_usdt,
         )
 
-        positions = {
-            symbol: {
+        positions = {}
+        for symbol, pos in self.portfolio.positions.items():
+            hard_stop = pos.avg_price * (1 - self.config.exits.stop_loss_pct)
+            trail_stop = None
+            peak = pos.peak_price or pos.avg_price
+            if self.config.exits.trailing_enabled and peak > 0:
+                gain = (peak - pos.avg_price) / pos.avg_price
+                if gain >= self.config.exits.trailing_activation_pct:
+                    trail_stop = peak * (1 - self.config.exits.trailing_pct)
+            positions[symbol] = {
                 "quantity": pos.quantity,
                 "avg_price": pos.avg_price,
+                "peak_price": peak,
                 "mark_price": prices.get(symbol, pos.avg_price),
-                "stop_loss": round(pos.avg_price * (1 - self.config.exits.stop_loss_pct), 8)
-                if self.config.exits.enabled
-                else None,
+                "stop_loss": round(hard_stop, 8) if self.config.exits.enabled else None,
+                "trailing_stop": round(trail_stop, 8) if trail_stop is not None else None,
                 "take_profit": round(pos.avg_price * (1 + self.config.exits.take_profit_pct), 8)
                 if self.config.exits.enabled
                 else None,
             }
-            for symbol, pos in self.portfolio.positions.items()
-        }
         return CycleResult(
             cycle_id=cycle_id,
             decisions=decisions,

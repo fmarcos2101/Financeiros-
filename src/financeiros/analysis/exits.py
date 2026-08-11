@@ -10,7 +10,7 @@ from financeiros.models import Candle, Position, Side
 class ExitAdvice:
     symbol: str
     side: Side
-    reason: str  # stop_loss | take_profit
+    reason: str  # stop_loss | trailing_stop | take_profit
     trigger_price: float
     fill_price: float
     quantity: float
@@ -19,7 +19,7 @@ class ExitAdvice:
 
 
 class ExitEngine:
-    """Regras de saída: stop-loss e take-profit sobre o preço médio de entrada."""
+    """Regras de saída: stop fixo, trailing stop e take-profit."""
 
     def __init__(self, config: ExitsConfig):
         self.config = config
@@ -32,27 +32,46 @@ class ExitEngine:
 
         last = candles[-1]
         avg = position.avg_price
-        stop_price = avg * (1.0 - self.config.stop_loss_pct)
+
+        # Atualiza pico para trailing (mutável na posição)
+        peak = position.peak_price or avg
+        peak = max(peak, last.high, last.close, avg)
+        position.peak_price = peak
+
+        hard_stop = avg * (1.0 - self.config.stop_loss_pct)
         take_price = avg * (1.0 + self.config.take_profit_pct)
 
-        hit_stop = last.low <= stop_price or last.close <= stop_price
+        trailing_armed = False
+        trailing_stop = hard_stop
+        if self.config.trailing_enabled and self.config.trailing_pct > 0:
+            gain_from_entry = (peak - avg) / avg
+            if gain_from_entry >= self.config.trailing_activation_pct:
+                trailing_armed = True
+                trailing_stop = peak * (1.0 - self.config.trailing_pct)
+
+        # Stop efetivo: o mais alto entre hard stop e trailing (protege mais lucro)
+        effective_stop = max(hard_stop, trailing_stop) if trailing_armed else hard_stop
+        stop_reason = "trailing_stop" if trailing_armed and trailing_stop >= hard_stop else "stop_loss"
+
+        hit_stop = last.low <= effective_stop or last.close <= effective_stop
         hit_take = last.high >= take_price or last.close >= take_price
 
-        # Se stop e TP no mesmo candle, assume o pior caso (stop) — mais conservador.
+        # Conservador: se stop e TP no mesmo candle, assume stop.
         if hit_stop:
-            fill = min(last.close, stop_price)
+            fill = min(last.close, effective_stop)
             pnl_pct = (fill - avg) / avg
+            label = "Trailing stop" if stop_reason == "trailing_stop" else "Stop-loss"
             return ExitAdvice(
                 symbol=position.symbol,
                 side=Side.SELL,
-                reason="stop_loss",
-                trigger_price=round(stop_price, 8),
+                reason=stop_reason,
+                trigger_price=round(effective_stop, 8),
                 fill_price=round(fill, 8),
                 quantity=position.quantity,
                 pnl_pct=round(pnl_pct, 6),
                 rationale=(
-                    f"Stop-loss atingido: preço {fill:.4f} <= stop {stop_price:.4f} "
-                    f"(entrada {avg:.4f}, limite -{self.config.stop_loss_pct:.1%})."
+                    f"{label} atingido: preço {fill:.4f} <= stop {effective_stop:.4f} "
+                    f"(entrada {avg:.4f}, pico {peak:.4f})."
                 ),
             )
 

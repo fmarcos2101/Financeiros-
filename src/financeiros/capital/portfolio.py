@@ -52,6 +52,7 @@ class Portfolio:
                 raise ValueError("Quantidade inválida após compra.")
             pos.avg_price = ((pos.quantity * pos.avg_price) + fill.notional) / new_qty
             pos.quantity = new_qty
+            pos.peak_price = max(pos.peak_price or 0.0, fill.price, pos.avg_price)
             self.cash_usdt -= total_cost
             self.positions[fill.symbol] = pos
             return outcome
