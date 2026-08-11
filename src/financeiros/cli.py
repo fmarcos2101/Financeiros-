@@ -18,6 +18,7 @@ from financeiros.execution.paper import PaperBroker
 from financeiros.logging_setup import setup_logging
 from financeiros.memory.store import MemoryStore
 from financeiros.pipeline import TradingPipeline
+from financeiros.report import DailyReporter
 
 
 def build_pipeline(config_path: str | None = None) -> TradingPipeline:
@@ -83,6 +84,7 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
     interval = args.interval or config.runtime.cycle_interval_seconds
     max_cycles = args.max_cycles
     pipeline = build_pipeline(args.config)
+    reporter = DailyReporter(config, memory=pipeline.memory)
 
     logger.info(
         "Iniciando run-loop interval=%ss max_cycles=%s mode=%s",
@@ -96,6 +98,18 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
         while True:
             cycle_n += 1
             try:
+                if config.runtime.emit_daily_report_in_loop:
+                    emitted = reporter.maybe_emit_for_new_day()
+                    if emitted is not None:
+                        logger.info(
+                            "Relatório diário emitido %s alerts=%s",
+                            emitted.date,
+                            len(emitted.alerts),
+                        )
+                        for alert in emitted.alerts:
+                            log_fn = logger.warning if alert.level != "info" else logger.info
+                            log_fn("ALERT [%s] %s: %s", alert.level, alert.code, alert.message)
+
                 result = pipeline.run_once()
                 logger.info(
                     "cycle_n=%s cycle_id=%s cash=%.4f reserve=%.4f equity=%.4f wealth=%.4f halted=%s decisions=%s",
@@ -127,6 +141,36 @@ def cmd_run_loop(args: argparse.Namespace) -> int:
         logger.info("Interrompido pelo usuário após %s ciclo(s).", cycle_n)
         return 0
 
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    logger = setup_logging(config.runtime.log_dir)
+    reporter = DailyReporter(config)
+    report = reporter.build(args.date)
+    path = reporter.save(report)
+    logger.info(
+        "Relatório %s salvo em %s | alerts=%s wealth=%s daily_pnl=%s%%",
+        report.date,
+        path,
+        len(report.alerts),
+        report.summary.get("ending_wealth_usdt"),
+        report.summary.get("daily_pnl_pct"),
+    )
+    for alert in report.alerts:
+        log_fn = logger.warning if alert.level != "info" else logger.info
+        log_fn("ALERT [%s] %s: %s", alert.level, alert.code, alert.message)
+
+    if args.text:
+        print(report.to_text())
+    else:
+        payload = report.to_dict()
+        if not args.full:
+            payload.pop("decisions", None)
+            payload.pop("fills", None)
+            payload.pop("cycles", None)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -442,6 +486,24 @@ def build_parser() -> argparse.ArgumentParser:
     halt.add_argument("--yes", action="store_true", help="Confirma o halt")
     halt.add_argument("--reason", default="manual_halt", help="Motivo do halt")
     halt.set_defaults(func=cmd_halt)
+
+    report = sub.add_parser("report", help="Gera relatório diário com alertas")
+    report.add_argument(
+        "--date",
+        default=None,
+        help="Dia UTC no formato YYYY-MM-DD (default: hoje)",
+    )
+    report.add_argument(
+        "--text",
+        action="store_true",
+        help="Imprime resumo em texto em vez de JSON",
+    )
+    report.add_argument(
+        "--full",
+        action="store_true",
+        help="Inclui decisions/fills/cycles no JSON",
+    )
+    report.set_defaults(func=cmd_report)
 
     bt = sub.add_parser("backtest", help="Replay offline da estratégia no histórico")
     bt.add_argument("--days", type=int, default=60, help="Janela histórica em dias")

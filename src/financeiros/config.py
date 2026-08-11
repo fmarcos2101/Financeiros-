@@ -73,6 +73,12 @@ class ExecutionConfig(BaseModel):
 class RuntimeConfig(BaseModel):
     cycle_interval_seconds: int = 3600
     log_dir: str = "data/logs"
+    report_dir: str = "data/logs/reports"
+    emit_daily_report_in_loop: bool = True
+    # Alertas do relatório (frações; warning antes do circuit breaker)
+    alert_daily_loss_pct: float = Field(default=0.02, ge=0.0, le=1.0)
+    alert_weekly_loss_pct: float = Field(default=0.05, ge=0.0, le=1.0)
+    alert_stop_count: int = 3
 
 
 class CircuitBreakerConfig(BaseModel):

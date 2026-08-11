@@ -17,6 +17,7 @@ Construir por partes:
 7. **Runtime** — `run-once` ou `run-loop` com logs
 8. **Backtest** — replay offline no histórico com métricas
 9. **Circuit breaker** — pausa novas compras em perda diária/semanal excessiva
+10. **Relatório diário** — resumo + alertas (também no `run-loop`)
 
 ### Saídas automáticas
 
@@ -27,6 +28,17 @@ Com posição aberta, o ciclo checa primeiro:
 - **Take-profit** — se o preço subir `take_profit_pct` acima da entrada
 
 Se stop e TP caem no mesmo candle, prevalece o **stop** (cenário conservador).
+
+### Relatório diário
+
+```bash
+financeiros report
+financeiros report --date 2026-08-10 --text
+```
+
+Gera JSON/TXT em `data/logs/reports/` com PnL do dia, trades, circuit breaker e alertas  
+(perda próxima do limite, muitos stops, robô haltado, etc.).  
+No `run-loop`, o relatório do dia anterior é emitido automaticamente na virada UTC.
 
 ### Circuit breaker
 
@@ -145,6 +157,5 @@ pytest -q
 
 ## Próximos passos sugeridos
 
-- Relatório diário / alertas
 - Backtest out-of-sample
 - Live trading só depois de métricas estáveis em paper + backtest/tune

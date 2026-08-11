@@ -21,6 +21,8 @@ data/memory/*.db
 data/memory/*.sqlite
 data/logs/*
 !data/logs/.gitkeep
+data/logs/reports/*
+!data/logs/reports/.gitkeep
 *.log
 
 # IDE

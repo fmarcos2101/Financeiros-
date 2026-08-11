@@ -108,6 +108,7 @@ class MemoryStore:
                     day_start_wealth REAL,
                     week_anchor_date TEXT,
                     week_start_wealth REAL,
+                    last_report_date TEXT,
                     updated_at TEXT NOT NULL
                 );
                 """
@@ -125,6 +126,9 @@ class MemoryStore:
             conn.execute(
                 "ALTER TABLE positions ADD COLUMN peak_price REAL NOT NULL DEFAULT 0"
             )
+        robot_cols = {row[1] for row in conn.execute("PRAGMA table_info(robot_state)").fetchall()}
+        if robot_cols and "last_report_date" not in robot_cols:
+            conn.execute("ALTER TABLE robot_state ADD COLUMN last_report_date TEXT")
 
     def record_decision(self, decision: Decision) -> int:
         with self._connect() as conn:
@@ -562,3 +566,67 @@ class MemoryStore:
             week_anchor_date=state.get("week_anchor_date") or utc_now().date().isoformat(),
             week_start_wealth=float(state.get("week_start_wealth") or 0.0),
         )
+
+    def get_last_report_date(self) -> str | None:
+        state = self.get_robot_state() or {}
+        return state.get("last_report_date")
+
+    def set_last_report_date(self, day: str) -> None:
+        state = self.get_robot_state()
+        now = utc_now().isoformat()
+        if state is None:
+            self.save_circuit_state(
+                halted=False,
+                reason=None,
+                halted_at=None,
+                day_anchor_date=day,
+                day_start_wealth=0.0,
+                week_anchor_date=day,
+                week_start_wealth=0.0,
+            )
+            state = self.get_robot_state() or {}
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE robot_state
+                SET last_report_date = ?, updated_at = ?
+                WHERE id = 1
+                """,
+                (day, now),
+            )
+
+    def decisions_between(self, start_iso: str, end_iso: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM decisions
+                WHERE created_at >= ? AND created_at <= ?
+                ORDER BY id ASC
+                """,
+                (start_iso, end_iso),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def fills_between(self, start_iso: str, end_iso: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM fills
+                WHERE filled_at >= ? AND filled_at <= ?
+                ORDER BY id ASC
+                """,
+                (start_iso, end_iso),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def cycles_between(self, start_iso: str, end_iso: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM cycles
+                WHERE finished_at >= ? AND finished_at <= ?
+                ORDER BY id ASC
+                """,
+                (start_iso, end_iso),
+            ).fetchall()
+        return [dict(r) for r in rows]
