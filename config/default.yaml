@@ -1,0 +1,84 @@
+mode: paper  # paper | testnet | live
+
+exchange:
+  name: binance
+  # data-api.binance.vision: endpoint público de mercado (evita bloqueio 451 regional)
+  base_url: https://data-api.binance.vision
+  timeout_seconds: 15
+  # trading_base_url: null  # default: testnet.binance.vision ou api.binance.com
+
+universe:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: 1h
+  lookback_candles: 120
+
+analysis:
+  fast_sma: 12
+  slow_sma: 26
+  min_signal_strength: 0.0007  # spread mínimo |SMA_fast-SMA_slow|/preço (~0.07%)
+  max_volatility: 0.08  # desvio-padrão relativo das retornos recentes
+  # Qualidade de entrada (recalibrado p/ OOS/walk-forward com trades no holdout):
+  # tendência + volume 1.4x — evita overfit do 1.5x (0 trades OOS)
+  require_trend_filter: true
+  require_slow_slope: false
+  slope_lookback: 5
+  require_momentum: false
+  rsi_period: 14
+  rsi_buy_min: 45
+  rsi_buy_max: 68
+  rsi_sell_max: 55
+  require_volume: true
+  volume_ma_period: 20
+  volume_factor: 1.4
+
+exits:
+  enabled: true
+  # Defaults vindos do `financeiros tune --days 60` (melhor score no período)
+  stop_loss_pct: 0.04
+  take_profit_pct: 0.06
+  trailing_enabled: true
+  trailing_pct: 0.03
+  trailing_activation_pct: 0.025
+
+capital:
+  starting_cash_usdt: 1000.0
+  risk_per_trade: 0.01      # 1% do equity por trade
+  max_position_pct: 0.20    # no máximo 20% do equity em um ativo
+  max_open_positions: 2
+  min_notional_usdt: 10.0
+  # Em cada venda com lucro, X% do PnL realizado vai para o fundo reserva
+  # (sai do caixa de trading e não é usado para novas compras)
+  reserve_enabled: true
+  reserve_skim_pct: 0.20
+
+memory:
+  db_path: data/memory/financeiros.db
+
+execution:
+  fee_bps: 10  # 0.10% por lado (simulação / estimativa)
+  dry_run: true  # em testnet/live: true = não envia ordem de verdade
+  max_order_notional_usdt: 50  # teto duro por ordem (comece baixo)
+  recv_window_ms: 5000
+  sync_balances_on_start: true  # testnet/live: alinha caixa/posições com a exchange
+
+runtime:
+  cycle_interval_seconds: 3600  # 1h entre ciclos no run-loop
+  log_dir: data/logs
+  report_dir: data/logs/reports
+  emit_daily_report_in_loop: true
+  heartbeat_stale_seconds: 7200  # health falha se heartbeat > 2h
+  dashboard_host: 127.0.0.1
+  dashboard_port: 8787
+  alert_daily_loss_pct: 0.02   # warning se perda do dia >= 2%
+  alert_weekly_loss_pct: 0.05  # warning se perda da semana >= 5%
+  alert_stop_count: 3
+
+circuit_breaker:
+  enabled: true
+  max_daily_loss_pct: 0.03    # pausa entradas se perder 3% no dia (UTC)
+  max_weekly_loss_pct: 0.07   # ou 7% na semana
+  block_new_entries: true
+  allow_exits: true           # stops/TP continuam mesmo haltado
+  auto_resume_next_day: true  # libera halt diário na virada do dia UTC
